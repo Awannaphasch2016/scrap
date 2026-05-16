@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scraping News Curator — Architecture</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .mermaid {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-top: 12px;
+    overflow-x: auto;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-top: 14px;
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .legend .swatch {
+    display: inline-block;
+    width: 18px;
+    height: 12px;
+    margin-right: 6px;
+    vertical-align: middle;
+    border-radius: 2px;
+  }
+  .legend .impl { border: 1px solid var(--accent); background: var(--surface-2); }
+  .legend .planned {
+    border: 1px dashed var(--accent);
+    background: var(--surface-2);
+    opacity: 0.7;
+  }
+  .legend .ext { border: 1px solid var(--muted); background: var(--bg); }
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    padding: 14px 18px;
+    margin-top: 14px;
+    border-radius: 0 var(--radius) var(--radius) 0;
+  }
+  table.schema {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    font-size: 14px;
+  }
+  table.schema th, table.schema td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.schema th { color: var(--muted); font-weight: 500; }
+  table.schema code {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+<main class="container">
+
+  <a class="back" href="index.html">← Back to profile</a>
+
+  <section class="hero">
+    <div class="eyebrow">Internal · Architecture reference</div>
+    <h1>Scraping News Curator — Architecture</h1>
+    <p class="one-liner">A personal knowledge-base pipeline: pull curated sources, store with a flexible schema, render a navigable HTML dashboard, and bundle for NotebookLM-powered Q&amp;A.</p>
+  </section>
+
+  <section class="section">
+    <h2>Overview</h2>
+    <p>The system is a small Python pipeline (<code>news_curator.py</code>) that ingests posts/comments from heterogeneous sources, persists them to SQLite with a <code>(core columns + metadata JSON)</code> schema so adding new source types never requires migrations, and produces two outputs: a static HTML dashboard for browsing, and a markdown digest for upload to NotebookLM where natural-language queries get grounded answers with citations.</p>
+  </section>
+
+  <section class="section">
+    <h2>Component diagram</h2>
+    <p style="color: var(--muted); font-size: 14px;">Data flow across external sources, the curator's internal stages, and the user-facing surfaces.</p>
+    <div class="mermaid">
+flowchart LR
+    User((You)):::user
+
+    subgraph ext[External sources]
+      R[Reddit JSON API]:::ext
+      HN[HN API]:::extPlanned
+      RSS[RSS feeds]:::extPlanned
+      BLOG[Blog scrapers]:::extPlanned
+    end
+
+    subgraph curator[Curator pipeline]
+      direction TB
+      subgraph fetch[Fetcher layer]
+        FR[reddit fetcher]:::impl
+        FHN[hn fetcher]:::planned
+        FRSS[rss fetcher]:::planned
+        FBLOG[blog fetcher]:::planned
+      end
+      DB[(news.db<br/>items + metadata JSON)]:::impl
+      REN[HTML renderer]:::impl
+      BUN[markdown bundler]:::planned
+      UPL[NotebookLM uploader<br/>via notebooklm-py]:::planned
+    end
+
+    subgraph out[Outputs]
+      HTML[news.html<br/>dashboard]:::impl
+      NB[NotebookLM<br/>notebook]:::extPlanned
+    end
+
+    R --> FR
+    HN -.-> FHN
+    RSS -.-> FRSS
+    BLOG -.-> FBLOG
+
+    FR --> DB
+    FHN -.-> DB
+    FRSS -.-> DB
+    FBLOG -.-> DB
+
+    DB --> REN --> HTML
+    DB -.-> BUN -.-> UPL -.-> NB
+
+    User --> HTML
+    User -.-> NB
+
+    classDef impl fill:#1c2026,stroke:#5eead4,color:#e8eaed
+    classDef planned fill:#1c2026,stroke:#5eead4,stroke-dasharray:5 5,color:#9aa3ad
+    classDef ext fill:#0b0d10,stroke:#9aa3ad,color:#e8eaed
+    classDef extPlanned fill:#0b0d10,stroke:#9aa3ad,stroke-dasharray:5 5,color:#9aa3ad
+    classDef user fill:#5eead4,stroke:#5eead4,color:#0b0d10
+    </div>
+
+    <div class="legend">
+      <span><span class="swatch impl"></span>implemented</span>
+      <span><span class="swatch planned"></span>planned</span>
+      <span><span class="swatch ext"></span>external system</span>
+    </div>
+
+    <div class="callout">
+      <strong>Extension point:</strong> a new source = one new fetcher module that yields <code>Item</code> records. No schema change, no renderer change. The dashed boxes (HN, RSS, blogs) are the same shape as the implemented Reddit fetcher.
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>Class diagram</h2>
+    <p style="color: var(--muted); font-size: 14px;">Data model and service modules. Storage is shown as the canonical <code>items + metadata</code> shape we're migrating toward.</p>
+    <div class="mermaid">
+classDiagram
+    direction LR
+
+    class Source {
+      +str id
+      +str name
+      +str type
+      +str url
+    }
+
+    class Item {
+      +str id
+      +str source_id
+      +str type
+      +str title
+      +str url
+      +str author
+      +str content
+      +float published_at
+      +float fetched_at
+      +dict metadata
+    }
+
+    class Fetcher {
+      &lt;&lt;interface&gt;&gt;
+      +fetch(source, cutoff_ts) Iterable~Item~
+    }
+
+    class RedditFetcher {
+      +fetch_posts(subreddit, cutoff_ts)
+      +fetch_top_level_comments(permalink)
+    }
+
+    class HNFetcher {
+      +fetch(source, cutoff_ts)
+    }
+
+    class RSSFetcher {
+      +fetch(source, cutoff_ts)
+    }
+
+    class Store {
+      +setup_db() Connection
+      +upsert_source(source)
+      +upsert_item(item)
+      +recent_items(window_days, source_id?) Iterable~Item~
+    }
+
+    class Renderer {
+      +render_html(conn, out_path)
+      -humanize_age(ts, now) str
+    }
+
+    class Bundler {
+      +export_markdown(conn, window_days, out_path)
+    }
+
+    class NotebookLMUploader {
+      +login()
+      +upload(file_path, notebook_id)
+    }
+
+    class Pipeline {
+      +main()
+    }
+
+    Fetcher &lt;|.. RedditFetcher
+    Fetcher &lt;|.. HNFetcher
+    Fetcher &lt;|.. RSSFetcher
+
+    Source "1" --> "*" Item : produces
+    Pipeline ..> Fetcher : invokes
+    Pipeline ..> Store : persists via
+    Pipeline ..> Renderer : renders via
+    Pipeline ..> Bundler : exports via
+    Pipeline ..> NotebookLMUploader : uploads via
+    Store ..> Item : reads/writes
+    Store ..> Source : reads/writes
+    Renderer ..> Item : reads
+    Bundler ..> Item : reads
+    </div>
+
+    <div class="callout">
+      <strong>Note:</strong> <code>HNFetcher</code>, <code>RSSFetcher</code>, <code>Bundler</code>, and <code>NotebookLMUploader</code> are planned — included to show how the <code>Fetcher</code> interface absorbs new sources without rippling changes. Today, <code>news_curator.py</code> is module-functional rather than class-based; the diagram describes the target shape as we add sources.
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>Storage schema</h2>
+    <p>The <code>items</code> table uses a "common columns + JSON metadata" shape — universal navigation/query fields live as columns; anything source-specific (Reddit score, HN points, RSS categories) lives untyped in <code>metadata</code>.</p>
+    <table class="schema">
+      <thead>
+        <tr><th>Column</th><th>Type</th><th>Purpose</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>id</code></td><td>TEXT PK</td><td>Globally unique, e.g. <code>reddit:t3_abc123</code></td></tr>
+        <tr><td><code>source_id</code></td><td>TEXT</td><td>FK to <code>sources</code></td></tr>
+        <tr><td><code>type</code></td><td>TEXT</td><td><code>post</code> | <code>comment</code> | <code>article</code></td></tr>
+        <tr><td><code>title</code></td><td>TEXT</td><td>Universal display label</td></tr>
+        <tr><td><code>url</code></td><td>TEXT</td><td>Canonical link</td></tr>
+        <tr><td><code>author</code></td><td>TEXT</td><td>Display author</td></tr>
+        <tr><td><code>content</code></td><td>TEXT</td><td>Body text (selftext / article / comment)</td></tr>
+        <tr><td><code>published_at</code></td><td>REAL</td><td>Unix ts — universal "when did the world see this"</td></tr>
+        <tr><td><code>fetched_at</code></td><td>REAL</td><td>Unix ts — when curator ingested it</td></tr>
+        <tr><td><code>metadata</code></td><td>TEXT (JSON)</td><td>Source-specific fields; queryable via <code>json_extract()</code></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer>
+    Anak Wannaphaschaiyong · architecture reference · <a href="index.html">profile</a>
+  </footer>
+
+</main>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      darkMode: true,
+      background: '#14171c',
+      primaryColor: '#1c2026',
+      primaryTextColor: '#e8eaed',
+      primaryBorderColor: '#2a2f37',
+      lineColor: '#5eead4',
+      secondaryColor: '#1c2026',
+      tertiaryColor: '#0b0d10'
+    },
+    flowchart: { curve: 'basis', padding: 14 },
+    class: { useMaxWidth: true }
+  });
+</script>
+
+</body>
+</html>

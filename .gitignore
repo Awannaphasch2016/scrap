@@ -4,3 +4,7 @@
 tmp/
 .context/*
 *.json
+__pycache__/
+*.db
+news.html
+digest.md
