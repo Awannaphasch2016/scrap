@@ -535,8 +535,19 @@ class NotebookLMUploader:
         _ensure_notebooklm_storage()
         from notebooklm import NotebookLMClient  # lazy import; optional dep
 
+        target_title = Path(file_path).name
+
         async def _run() -> None:
             async with await NotebookLMClient.from_storage() as client:
+                # rotate: delete any prior source with the same filename so the
+                # notebook holds exactly one current digest, not one per day
+                existing = await client.sources.list(self.notebook_id)
+                for s in existing:
+                    if getattr(s, "title", "") == target_title:
+                        try:
+                            await client.sources.delete(self.notebook_id, s.id)
+                        except Exception as e:  # noqa: BLE001
+                            print(f"  warning: could not delete prior {target_title}: {e}")
                 await client.sources.add_file(self.notebook_id, file_path, wait=True)
 
         asyncio.run(_run())
