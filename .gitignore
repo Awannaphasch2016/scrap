@@ -4,6 +4,7 @@
 tmp/
 .context/*
 *.json
+!lambda/iam/*.json
 __pycache__/
 *.db
 news.html
