@@ -228,7 +228,11 @@ class RedditFetcher(Fetcher):
             url = f"https://www.reddit.com/r/{subreddit}/new.json?limit=100"
             if after:
                 url += f"&after={after}"
-            r = requests.get(url, headers=headers, timeout=15)
+            proxies = (
+                {"http": os.environ["HTTP_PROXY"], "https": os.environ["HTTPS_PROXY"]}
+                if os.environ.get("HTTP_PROXY") else None
+            )
+            r = requests.get(url, headers=headers, timeout=15, proxies=proxies)
             r.raise_for_status()
             data = r.json()
             children = data["data"]["children"]
@@ -252,8 +256,12 @@ class RedditFetcher(Fetcher):
     def _fetch_top_level_comments(self, permalink: str) -> list[dict]:
         url = f"https://www.reddit.com{permalink}.json?limit=200&depth=1"
         headers = {"User-Agent": USER_AGENT}
+        proxies = (
+            {"http": os.environ["HTTP_PROXY"], "https": os.environ["HTTPS_PROXY"]}
+            if os.environ.get("HTTP_PROXY") else None
+        )
         try:
-            r = requests.get(url, headers=headers, timeout=15)
+            r = requests.get(url, headers=headers, timeout=15, proxies=proxies)
             r.raise_for_status()
         except requests.RequestException as e:
             print(f"  comment fetch failed for {permalink}: {e}")
