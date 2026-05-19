@@ -1,0 +1,35 @@
+@startuml C4_Dynamic_DailyRun
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Dynamic.puml
+
+title C4 Dynamic — Daily run, end-to-end\nNumbered runtime flow for one EventBridge-triggered invocation. Steps 3–5 are the planned residential-proxy additions; everything else is already deployed.
+
+Container_Ext(eventbridge, "EventBridge", "cron 06:00 UTC")
+Container(handler, "Lambda handler", "Python 3.12")
+Container_Ext(doppler, "Doppler", "scrape/dev")
+Container(tailscaled_lambda, "tailscaled (userspace)", "in Lambda")
+Container_Ext(tailscale_cp, "Tailscale control plane")
+Container(bridge, "HTTP→SOCKS5 bridge", "Python, localhost:8889")
+Container(curator, "news_curator", "Python pipeline")
+Container_Ext(laptop_tinyproxy, "tinyproxy", "on laptop tailnet IP:8888")
+Container_Ext(reddit, "Reddit", "reddit.com/r/X/new.json")
+Container_Ext(notebooklm, "NotebookLM", "sources + chat API")
+
+Rel_D(eventbridge, handler, "1. InvokeFunction (cold start)")
+Rel_D(handler, doppler, "2. GET /v3/configs/.../secrets/download\n   (TOKEN, NOTEBOOK_ID, STORAGE_STATE, TS_AUTHKEY, LAPTOP_TAILNET_IP)")
+Rel_D(handler, tailscaled_lambda, "3. spawn tailscaled --tun=userspace-networking\n   --socks5-server=localhost:1055\n   (planned)")
+Rel_D(tailscaled_lambda, tailscale_cp, "4. tailscale up --authkey=$TS_AUTHKEY\n   (no --exit-node, sidesteps issue #14409)\n   (planned)")
+Rel_D(handler, bridge, "5. start TCP listener on localhost:8889\n   (planned)")
+Rel_D(handler, curator, "6. set HTTP_PROXY=http://localhost:8889\n   import news_curator; run main()")
+
+Rel_D(curator, bridge, "7. requests.get(reddit.com/r/.../new.json,\n   proxies={localhost:8889})")
+Rel_D(bridge, tailscaled_lambda, "8. SOCKS5 CONNECT target=100.x.x.x:8888")
+Rel_D(tailscaled_lambda, laptop_tinyproxy, "9. tunneled TCP\n   (WireGuard via Tailscale)")
+Rel_D(laptop_tinyproxy, reddit, "10. GET ... (source IP = laptop's residential ISP)")
+Rel_U(reddit, curator, "11. 200 OK + JSON\n    (response flows back the same path)")
+
+Rel_D(curator, notebooklm, "12. NotebookLMClient.sources.add_file(digest.md)\n    (HTTPS direct — NotebookLM is fine with AWS IPs)")
+
+Rel_U(handler, eventbridge, "13. return {status: ok}")
+
+@enduml

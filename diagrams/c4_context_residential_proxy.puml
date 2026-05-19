@@ -1,0 +1,28 @@
+@startuml C4_Context_ResidentialProxy
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Context.puml
+
+title C4 Level 1 — System Context: Scraping News Curator with residential-proxy egress\nWho the system serves, what it depends on, and where data flows in/out.
+
+Person(operator, "Operator", "Curates topics, runs queries, owns the laptop that provides residential egress.")
+
+System(curator_system, "Scraping News Curator", "Daily pipeline: pulls r/WebScraping posts and uploads a digest to NotebookLM. Outbound traffic routes through the operator's laptop residential IP via Tailscale.")
+
+System_Ext(reddit, "Reddit", "Public subreddit JSON endpoints. Blocks anonymous AWS-IP traffic; allows residential IPs.")
+System_Ext(notebooklm, "NotebookLM", "Holds the curated digest as a notebook source and serves cited Q&A.")
+System_Ext(doppler, "Doppler", "Secrets vault: AWS creds, Doppler service token, Tailscale auth key, NotebookLM session blob, NotebookLM notebook ID.")
+System_Ext(tailscale, "Tailscale", "Mesh VPN control plane: authenticates nodes, distributes ACLs, brokers NAT traversal between Lambda and the laptop.")
+System_Ext(aws, "AWS", "Compute substrate: hosts the Lambda function image (ECR), the daily EventBridge schedule, and CloudWatch logs.")
+System_Ext(laptop_net, "Operator's laptop home network", "Whichever apartment the laptop is currently at. Provides the residential ISP egress IP that Reddit sees as legitimate consumer traffic.")
+
+Rel(operator, curator_system, "Configures topics, triggers manual runs, asks queries", "curator CLI")
+Rel(curator_system, doppler, "Reads secrets at cold start", "HTTPS")
+Rel(curator_system, tailscale, "Authenticates, joins tailnet", "HTTPS")
+Rel(curator_system, laptop_net, "Routes outbound traffic via tinyproxy on laptop", "Tailscale tunnel")
+Rel(laptop_net, reddit, "Fetches posts and comments\n(source IP = residential ISP)", "HTTPS")
+Rel(curator_system, notebooklm, "Uploads digest.md as a source", "HTTPS (direct, not via proxy)")
+Rel(curator_system, aws, "Runs on Lambda, scheduled by EventBridge", "AWS APIs")
+Rel(operator, notebooklm, "Asks grounded queries\n(via curator ask, or the NotebookLM web UI)", "")
+
+SHOW_LEGEND()
+@enduml

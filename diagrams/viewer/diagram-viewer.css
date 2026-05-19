@@ -1,0 +1,103 @@
+/* Diagram viewer styles: fullscreen modal, fullscreen button, pan/zoom container.
+   Scoped under .diagram-host and .diagram-modal so page CSS doesn't leak.
+
+   Requires svg-pan-zoom@3.6.1 to be loaded before diagram-viewer.js. */
+
+.diagram-host {
+  position: relative;
+  background: #fafafa;
+  border: 1px solid var(--border, #2a2f37);
+  border-radius: 6px;
+  padding: 1.25rem;
+  margin: 0.5rem 0;
+  overflow-x: auto;
+}
+.diagram-host svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+.diagram-host .fullscreen-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #ccc;
+  background: rgba(255, 255, 255, 0.85);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  color: #333;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+.diagram-host .fullscreen-btn:hover {
+  background: #fff;
+  border-color: #888;
+}
+
+.diagram-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.92);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+}
+.diagram-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.6rem 1rem;
+  background: #1c2026;
+  color: #e8eaed;
+  border-bottom: 1px solid #2a2f37;
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: 0.85rem;
+}
+.diagram-modal-hint { color: #9aa3ad; }
+.diagram-modal-close {
+  background: transparent;
+  border: 1px solid #5eead4;
+  color: #5eead4;
+  padding: 0.3rem 0.8rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.diagram-modal-close:hover {
+  background: rgba(94, 234, 212, 0.1);
+}
+.diagram-modal-body {
+  flex: 1;
+  background: #fafafa;
+  overflow: hidden;
+  position: relative;
+}
+.diagram-modal-body svg {
+  width: 100%;
+  height: 100%;
+}
+
+.render-error {
+  background: #2a1d1d;
+  border: 1px solid #d97757;
+  border-radius: 6px;
+  padding: 1rem;
+  color: #f3e8e8;
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  font-size: 0.9rem;
+}
+.render-error pre {
+  background: #1a1313;
+  color: #f3e8e8;
+  padding: 0.6rem;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 0.8rem;
+}

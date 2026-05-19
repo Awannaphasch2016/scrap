@@ -1,0 +1,39 @@
+@startuml C4_Dynamic_DailyRun_BlastRadius
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Dynamic.puml
+
+title Blast radius — Dynamic flow\nNumbered runtime flow, color-coded by which steps this plan introduces vs leaves alone.
+
+AddElementTag("critical", $bgColor="#FF6666", $borderColor="#990000", $fontColor="#FFFFFF", $legendText="🔴 NEW — added by this plan")
+AddElementTag("high",     $bgColor="#FFB3B3", $borderColor="#B30000", $fontColor="#660000", $legendText="🚨 MODIFIED — edited by this plan")
+AddElementTag("medium",   $bgColor="#FFE0B3", $borderColor="#CC8800", $fontColor="#663300", $legendText="🟡 INDIRECTLY-AFFECTED — interacts differently")
+AddElementTag("low",      $bgColor="#E0F0FF", $borderColor="#3366AA", $fontColor="#003366", $legendText="✅ UNCHANGED — already in production")
+AddElementTag("external", $bgColor="#F2F2F2", $borderColor="#666666", $fontColor="#333333", $legendText="External — outside the system")
+AddRelTag("blast", $lineColor="#B30000", $textColor="#B30000", $lineStyle="dashed")
+AddRelTag("static", $lineColor="#888888", $textColor="#888888")
+
+Container_Ext(eventbridge, "EventBridge", "cron 06:00 UTC", $tags="external")
+Container(handler, "Lambda handler", "Python 3.12", $tags="high")
+Container_Ext(doppler, "Doppler", "scrape/dev", $tags="medium")
+Container(tailscaled_lambda, "tailscaled (userspace)", "in Lambda", $tags="critical")
+Container_Ext(tailscale_cp, "Tailscale control plane", $tags="critical")
+Container(bridge, "HTTP→SOCKS5 bridge", "Python, localhost:8889", $tags="critical")
+Container(curator, "news_curator", "Python pipeline", $tags="high")
+Container_Ext(laptop_tinyproxy, "tinyproxy", "on laptop tailnet IP:8888", $tags="critical")
+Container_Ext(reddit, "Reddit", "reddit.com/r/X/new.json", $tags="external")
+Container_Ext(notebooklm, "NotebookLM", "sources + chat API", $tags="external")
+Rel_D(eventbridge, handler, "1. InvokeFunction (unchanged)", $tags="static")
+Rel_D(handler, doppler, "2. /secrets/download\n   (now also returns TS_AUTHKEY,\n    LAPTOP_TAILNET_IP, TINYPROXY_PORT)", $tags="blast")
+Rel_D(handler, tailscaled_lambda, "3. NEW: spawn tailscaled\n   --tun=userspace-networking\n   --socks5-server=:1055", $tags="blast")
+Rel_D(tailscaled_lambda, tailscale_cp, "4. NEW: tailscale up --authkey\n   (no --exit-node, sidesteps #14409)", $tags="blast")
+Rel_D(handler, bridge, "5. NEW: start listener on :8889", $tags="blast")
+Rel_D(handler, curator, "6. NEW (modified): set HTTP_PROXY=:8889\n   then import + run main()", $tags="blast")
+Rel_D(curator, bridge, "7. NEW: requests.get(reddit, proxies=:8889)", $tags="blast")
+Rel_D(bridge, tailscaled_lambda, "8. NEW: SOCKS5 CONNECT 100.x.x.x:8888", $tags="blast")
+Rel_D(tailscaled_lambda, laptop_tinyproxy, "9. NEW: WireGuard tunnel", $tags="blast")
+Rel_D(laptop_tinyproxy, reddit, "10. NEW egress: GET /r/X/new.json\n    (source IP = laptop residential ISP)", $tags="blast")
+Rel_U(reddit, curator, "11. MODIFIED: 200 OK + JSON\n    (response now traverses the new path back)", $tags="blast")
+Rel_D(curator, notebooklm, "12. sources.add_file(digest.md)\n    (unchanged — direct HTTPS, no proxy)", $tags="static")
+Rel_U(handler, eventbridge, "13. return {status: ok} (unchanged)", $tags="static")
+SHOW_LEGEND()
+@enduml

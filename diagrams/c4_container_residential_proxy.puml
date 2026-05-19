@@ -1,0 +1,58 @@
+@startuml C4_Container_ResidentialProxy
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Container.puml
+
+title C4 Level 2 — Containers: residential-proxy egress for scrape-news-curator\nLambda routes outbound traffic through the user's laptop's residential ISP IP via Tailscale, sidestepping Reddit's datacenter-IP block.
+
+AddElementTag("planned", $bgColor="#1c2026", $fontColor="#9aa3ad", $borderColor="#5eead4", $legendText="Planned — to be added in this implementation")
+AddElementTag("existing", $bgColor="#14171c", $fontColor="#e8eaed", $borderColor="#5eead4", $legendText="Existing — already deployed")
+AddElementTag("external", $bgColor="#0b0d10", $fontColor="#e8eaed", $borderColor="#9aa3ad", $legendText="External system")
+
+Person(operator, "Operator (you)", "Owns laptop, triggers manual runs and ad-hoc queries.")
+
+System_Ext(reddit, "Reddit JSON API", "reddit.com/r/X/new.json — refuses anonymous calls from AWS IPs; OK from residential IPs.", $tags="external")
+System_Ext(doppler, "Doppler", "scrape/dev — holds DOPPLER_TOKEN, NOTEBOOKLM_*, AWS_*, TS_AUTHKEY, LAPTOP_TAILNET_IP.", $tags="external")
+System_Ext(notebooklm, "NotebookLM", "Receives digest.md as a notebook source; serves grounded Q&A.", $tags="external")
+System_Ext(tailscale_cp, "Tailscale Control Plane", "tailnet membership, ACLs, DERP relays for NAT traversal.", $tags="external")
+System_Boundary(laptop_b, "Operator's laptop (any apartment)") {
+    Container(laptop_tailscaled, "tailscaled (kernel mode)", "Tailscale daemon", "Joins tailnet; advertises as a tailnet node.", $tags="planned")
+    Container(laptop_tinyproxy, "tinyproxy", "HTTP forward proxy", "Bound to laptop's tailnet IP (100.x.x.x:8888). Allows tailnet CGNAT range only.", $tags="planned")
+}
+
+System_Boundary(aws_b, "AWS Account 755283537543 · region ap-southeast-1") {
+
+    Container(eventbridge, "scrape-news-curator-daily", "EventBridge Rule", "cron(0 6 * * ? *) — 06:00 UTC daily trigger.", $tags="existing")
+    System_Boundary(lambda_b, "scrape-news-curator Lambda (container image)") {
+        Container(handler, "handler.lambda_handler", "Python 3.12", "Cold-start orchestrator: redirects HOME=/tmp, fetches Doppler secrets, starts Tailscale + bridge, invokes curator.", $tags="existing")
+        Container(lambda_tailscaled, "tailscaled (userspace)", "Tailscale daemon, in-container", "--tun=userspace-networking --socks5-server=localhost:1055. NO --exit-node (avoids rp_filter issue #14409).", $tags="planned")
+        Container(bridge, "proxy bridge", "Python (~30 LOC, pysocks)", "Listens localhost:8889; for each conn, opens SOCKS5 via localhost:1055 with target=laptop tailnet IP:8888. Transparent HTTP-proxy facade.", $tags="planned")
+        Container(curator, "news_curator.main", "Python", "RedditFetcher + Renderer + Bundler + NotebookLMUploader. Reads HTTP_PROXY env to route requests.get() through the bridge.", $tags="existing")
+        ContainerDb(tmp, "/tmp scratch", "Lambda ephemeral disk", "news.db (SQLite), digest.md, /tmp/.notebooklm/storage_state.json.", $tags="existing")
+    }
+
+    Container(ecr, "ECR: scrape-news-curator", "Elastic Container Registry", "Holds the Lambda container image, including Tailscale binaries (~30 MB added).", $tags="existing")
+}
+
+Rel(operator, laptop_tailscaled, "tailscale up (one-time auth)", "browser flow")
+Rel(operator, laptop_tinyproxy, "systemd enable --now", "shell")
+Rel(operator, eventbridge, "Daily auto-trigger\n(or manual aws lambda invoke)")
+
+Rel(eventbridge, handler, "InvokeFunction", "AWS SDK")
+Rel(handler, doppler, "GET /v3/configs/.../secrets/download", "HTTPS (DOPPLER_TOKEN)")
+Rel(handler, lambda_tailscaled, "spawn tailscaled + tailscale up\n(no exit-node flag)", "subprocess")
+Rel(lambda_tailscaled, tailscale_cp, "Auth via TS_AUTHKEY, join tailnet", "HTTPS")
+Rel(handler, bridge, "start bridge on :8889", "thread")
+Rel(handler, curator, "import + run main()\nHTTP_PROXY=http://localhost:8889", "in-process")
+
+Rel(curator, bridge, "requests.get(... proxies=...)", "HTTP via localhost:8889")
+Rel(bridge, lambda_tailscaled, "SOCKS5 CONNECT\ntarget=laptop_tailnet_ip:8888", "SOCKS5 localhost:1055")
+Rel(lambda_tailscaled, laptop_tailscaled, "WireGuard tunnel\n(via DERP if NAT)", "Tailscale tunnel")
+Rel(laptop_tailscaled, laptop_tinyproxy, "loopback to bound tailnet IP", "TCP")
+Rel(laptop_tinyproxy, reddit, "GET reddit.com/r/X/new.json\n(source IP = laptop's residential ISP)", "HTTPS")
+
+Rel(curator, tmp, "write items, digest.md, storage_state.json")
+Rel(curator, notebooklm, "sources.add_file(digest.md)\n(direct egress, no proxy needed)", "HTTPS")
+Rel(ecr, handler, "Lambda pulls image", "OCI")
+
+SHOW_LEGEND()
+@enduml

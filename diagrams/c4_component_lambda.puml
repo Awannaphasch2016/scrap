@@ -1,0 +1,54 @@
+@startuml C4_Component_Lambda
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Component.puml
+
+title C4 Level 3 — Components inside the scrape-news-curator Lambda\nHow handler.py orchestrates cold-start setup and drives news_curator's pipeline.
+
+AddElementTag("planned", $bgColor="#1c2026", $fontColor="#9aa3ad", $borderColor="#5eead4", $legendText="Planned — added by the residential-proxy implementation")
+AddElementTag("existing", $bgColor="#14171c", $fontColor="#e8eaed", $borderColor="#5eead4", $legendText="Existing — already deployed")
+AddElementTag("external", $bgColor="#0b0d10", $fontColor="#e8eaed", $borderColor="#9aa3ad", $legendText="External system")
+
+Person(operator, "Operator")
+System_Ext(eventbridge, "EventBridge", "Daily cron trigger", $tags="external")
+System_Ext(doppler_api, "Doppler API", "v3 secrets download", $tags="external")
+System_Ext(tailscale_cp, "Tailscale control plane", "Auth + DERP relays", $tags="external")
+System_Ext(reddit, "Reddit", "Public JSON endpoints", $tags="external")
+System_Ext(notebooklm, "NotebookLM", "Sources + chat API", $tags="external")
+System_Ext(laptop_proxy, "Laptop tinyproxy", "Forward HTTP proxy on tailnet IP", $tags="external")
+Container_Boundary(lambda, "scrape-news-curator Lambda container") {
+    Component(handler_main, "lambda_handler(event, ctx)", "Python (handler.py)", "Top-level entry. Orchestrates cold-start setup, then invokes news_curator.main().", $tags="existing")
+    Component(prep_layout, "_prepare_writable_layout", "Python helper", "Sets HOME=/tmp and chdir(/tmp) — only writable path in Lambda.", $tags="existing")
+    Component(fetch_doppler, "_fetch_doppler_secrets", "Python helper", "Reads DOPPLER_TOKEN, hits Doppler v3 /secrets/download, injects each key into os.environ.", $tags="existing")
+    Component(start_ts, "_start_tailscale", "Python helper", "Spawns tailscaled --tun=userspace-networking --socks5-server=:1055. Runs `tailscale up --authkey=$TS_AUTHKEY` (no --exit-node, sidesteps rp_filter check).", $tags="planned")
+    Component(start_bridge, "_start_proxy_bridge", "Python helper (~30 LOC, pysocks)", "Listens localhost:8889. Per conn: opens SOCKS5 to :1055 with target=$LAPTOP_TAILNET_IP:8888; bidirectional byte forwarding in two daemon threads.", $tags="planned")
+    Component(ensure_storage, "_ensure_notebooklm_storage", "Python helper", "Materializes NOTEBOOKLM_STORAGE_STATE env blob to /tmp/.notebooklm/storage_state.json with 0o600 perms.", $tags="existing")
+    Component(pipeline, "news_curator.main", "Python orchestrator", "Reads SOURCES config, dispatches per-source Fetcher, persists to Store, renders HTML + digest, uploads to NotebookLM.", $tags="existing")
+    Component(fetcher, "RedditFetcher", "Python class", "yields Item generators from reddit.com/r/X/new.json + comments. requests.get(... proxies={HTTP_PROXY}) so calls flow through the bridge.", $tags="existing")
+    Component(store, "Store", "Python class (SQLite)", "items table with metadata-JSON column. Backed by /tmp/news.db (ephemeral per Lambda exec).", $tags="existing")
+    Component(bundler, "Bundler", "Python class", "Reads items from Store, emits /tmp/digest.md with post + top-10 comments per post.", $tags="existing")
+    Component(uploader, "NotebookLMUploader", "Python class", "Lazy-imports notebooklm.NotebookLMClient. Rotates the prior digest.md source on the notebook before uploading the fresh one.", $tags="existing")
+}
+
+Rel(operator, eventbridge, "Manages schedule\n(aws events put-rule)")
+Rel(eventbridge, handler_main, "Invoke (cron)", "AWS SDK")
+Rel(handler_main, prep_layout, "1. HOME=/tmp, cd /tmp")
+Rel(handler_main, fetch_doppler, "2. inject secrets")
+Rel(fetch_doppler, doppler_api, "GET /secrets/download\nAuthorization: Bearer DOPPLER_TOKEN", "HTTPS")
+Rel(handler_main, start_ts, "3. start tailscaled (planned)")
+Rel(start_ts, tailscale_cp, "TS_AUTHKEY → join tailnet", "HTTPS")
+Rel(handler_main, start_bridge, "4. start :8889 bridge (planned)")
+Rel(handler_main, pipeline, "5. import + run main()\nHTTP_PROXY=http://localhost:8889")
+
+Rel(pipeline, fetcher, "fetcher.fetch(source, cutoff)")
+Rel(fetcher, start_bridge, "requests.get(reddit.com, proxies=:8889)")
+Rel(start_bridge, start_ts, "SOCKS5 CONNECT 100.x.x.x:8888", "via :1055")
+Rel(start_ts, laptop_proxy, "tunneled TCP", "Tailscale WireGuard")
+Rel(laptop_proxy, reddit, "GET /r/X/new.json", "HTTPS (residential IP)")
+Rel(pipeline, store, "upsert_item per row")
+Rel(pipeline, bundler, "export digest.md")
+Rel(pipeline, ensure_storage, "before upload")
+Rel(pipeline, uploader, "upload digest.md")
+Rel(uploader, notebooklm, "sources.add_file", "HTTPS direct, no proxy")
+
+SHOW_LEGEND()
+@enduml

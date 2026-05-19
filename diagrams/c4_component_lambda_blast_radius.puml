@@ -1,0 +1,56 @@
+@startuml C4_Component_Lambda_BlastRadius
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Component.puml
+
+title Blast radius — L3 Component (inside Lambda)\nCode-level diff: new helpers, modified methods, untouched pipeline parts.
+
+AddElementTag("critical", $bgColor="#FF6666", $borderColor="#990000", $fontColor="#FFFFFF", $legendText="🔴 NEW — added by this plan")
+AddElementTag("high",     $bgColor="#FFB3B3", $borderColor="#B30000", $fontColor="#660000", $legendText="🚨 MODIFIED — edited by this plan")
+AddElementTag("medium",   $bgColor="#FFE0B3", $borderColor="#CC8800", $fontColor="#663300", $legendText="🟡 INDIRECTLY-AFFECTED — interacts differently")
+AddElementTag("low",      $bgColor="#E0F0FF", $borderColor="#3366AA", $fontColor="#003366", $legendText="✅ UNCHANGED — already in production")
+AddElementTag("external", $bgColor="#F2F2F2", $borderColor="#666666", $fontColor="#333333", $legendText="External — outside the system")
+AddRelTag("blast", $lineColor="#B30000", $textColor="#B30000", $lineStyle="dashed")
+AddRelTag("static", $lineColor="#888888", $textColor="#888888")
+
+Person(operator, "Operator", $tags="low")
+System_Ext(eventbridge, "EventBridge", "Daily cron trigger (unchanged)", $tags="external")
+System_Ext(doppler_api, "Doppler API", "Now serves 3 extra keys to the same /secrets/download call", $tags="medium")
+System_Ext(tailscale_cp, "Tailscale control plane", "NEW: auth + DERP relays", $tags="critical")
+System_Ext(reddit, "Reddit", "Public JSON endpoints (unchanged)", $tags="external")
+System_Ext(notebooklm, "NotebookLM", "Sources + chat API (unchanged)", $tags="external")
+System_Ext(laptop_proxy, "Laptop tinyproxy", "NEW: HTTP forward proxy on laptop tailnet IP", $tags="critical")
+Container_Boundary(lambda, "scrape-news-curator Lambda container") {
+    Component(handler_main, "lambda_handler(event, ctx)", "Python (handler.py)", "MODIFIED: inserts _start_tailscale() + _start_proxy_bridge() between Doppler fetch and curator import; sets HTTP_PROXY env.", $tags="high")
+    Component(prep_layout, "_prepare_writable_layout", "Python helper", "Unchanged: HOME=/tmp, chdir(/tmp).", $tags="low")
+    Component(fetch_doppler, "_fetch_doppler_secrets", "Python helper", "Behavior unchanged; *what* it returns is broader — 3 new keys flow through.", $tags="medium")
+    Component(start_ts, "_start_tailscale", "Python helper", "NEW (~25 LOC): subprocess.Popen tailscaled; poll socket; tailscale up --authkey. No --exit-node flag (sidesteps rp_filter check, Tailscale issue #14409).", $tags="critical")
+    Component(start_bridge, "_start_proxy_bridge", "Python helper (~30 LOC, pysocks)", "NEW: localhost:8889 listener. Per-conn opens SOCKS5 to :1055 targeting $LAPTOP_TAILNET_IP:8888; bidirectional byte splice in two daemon threads.", $tags="critical")
+    Component(ensure_storage, "_ensure_notebooklm_storage", "Python helper", "Unchanged.", $tags="low")
+    Component(pipeline, "news_curator.main", "Python orchestrator", "Behavior unchanged at the top level — but its child RedditFetcher now honors HTTP_PROXY.", $tags="medium")
+    Component(fetcher, "RedditFetcher", "Python class", "MODIFIED: two requests.get() calls gain proxies=HTTP_PROXY kwarg. When env is unset (local dev), proxies=None → direct, unchanged behavior.", $tags="high")
+    Component(store, "Store", "Python class (SQLite)", "Unchanged.", $tags="low")
+    Component(bundler, "Bundler", "Python class", "Unchanged.", $tags="low")
+    Component(uploader, "NotebookLMUploader", "Python class", "Unchanged — NotebookLM uploads bypass the proxy entirely.", $tags="low")
+}
+
+Rel(operator, eventbridge, "Manages schedule (unchanged)", "aws events", $tags="static")
+Rel(eventbridge, handler_main, "Invoke (cron, unchanged)", "AWS SDK", $tags="static")
+Rel(handler_main, prep_layout, "1. HOME=/tmp, cd /tmp (unchanged)", $tags="static")
+Rel(handler_main, fetch_doppler, "2. inject secrets (now broader set)", $tags="blast")
+Rel(fetch_doppler, doppler_api, "GET /secrets/download (3 new keys returned)", "HTTPS", $tags="blast")
+Rel(handler_main, start_ts, "3. NEW: start tailscaled in background", $tags="blast")
+Rel(start_ts, tailscale_cp, "TS_AUTHKEY → join tailnet", "HTTPS", $tags="blast")
+Rel(handler_main, start_bridge, "4. NEW: start :8889 bridge", $tags="blast")
+Rel(handler_main, pipeline, "5. set HTTP_PROXY=:8889 then run main()", $tags="blast")
+Rel(pipeline, fetcher, "fetcher.fetch(source, cutoff) — call shape unchanged", "", $tags="static")
+Rel(fetcher, start_bridge, "NEW: requests.get(reddit.com, proxies=:8889)", $tags="blast")
+Rel(start_bridge, start_ts, "NEW: SOCKS5 CONNECT 100.x.x.x:8888", "via :1055", $tags="blast")
+Rel(start_ts, laptop_proxy, "NEW: tunneled TCP", "WireGuard", $tags="blast")
+Rel(laptop_proxy, reddit, "NEW: GET /r/X/new.json (residential IP)", "HTTPS", $tags="blast")
+Rel(pipeline, store, "upsert_item per row (unchanged)", $tags="static")
+Rel(pipeline, bundler, "export digest.md (unchanged)", $tags="static")
+Rel(pipeline, ensure_storage, "before upload (unchanged)", $tags="static")
+Rel(pipeline, uploader, "upload digest.md (unchanged)", $tags="static")
+Rel(uploader, notebooklm, "sources.add_file (unchanged, direct)", "HTTPS", $tags="static")
+SHOW_LEGEND()
+@enduml

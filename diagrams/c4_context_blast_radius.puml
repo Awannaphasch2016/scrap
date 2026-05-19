@@ -1,0 +1,32 @@
+@startuml C4_Context_BlastRadius
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Context.puml
+
+title Blast radius — L1 Context\nChange-status overlay: what this plan adds, modifies, and leaves alone at the system level.
+
+AddElementTag("critical", $bgColor="#FF6666", $borderColor="#990000", $fontColor="#FFFFFF", $legendText="🔴 NEW — added by this plan")
+AddElementTag("high",     $bgColor="#FFB3B3", $borderColor="#B30000", $fontColor="#660000", $legendText="🚨 MODIFIED — edited by this plan")
+AddElementTag("medium",   $bgColor="#FFE0B3", $borderColor="#CC8800", $fontColor="#663300", $legendText="🟡 INDIRECTLY-AFFECTED — interacts differently")
+AddElementTag("low",      $bgColor="#E0F0FF", $borderColor="#3366AA", $fontColor="#003366", $legendText="✅ UNCHANGED — already in production")
+AddElementTag("external", $bgColor="#F2F2F2", $borderColor="#666666", $fontColor="#333333", $legendText="External — outside the system")
+AddRelTag("blast", $lineColor="#B30000", $textColor="#B30000", $lineStyle="dashed")
+AddRelTag("static", $lineColor="#888888", $textColor="#888888")
+
+Person(operator, "Operator", "Curates topics, runs queries, owns the laptop that provides residential egress.", $tags="low")
+System(curator_system, "Scraping News Curator", "System's egress identity flips from AWS datacenter IP to residential ISP IP via Tailscale + tinyproxy.", $tags="high")
+System_Ext(reddit, "Reddit", "Public subreddit JSON. Already blocked anonymous AWS-IP; will accept the new residential-IP egress.", $tags="external")
+System_Ext(notebooklm, "NotebookLM", "Receives digest.md as a notebook source.", $tags="external")
+System_Ext(doppler, "Doppler", "Now stores 3 new secrets: TS_AUTHKEY, LAPTOP_TAILNET_IP, TINYPROXY_PORT.", $tags="medium")
+System_Ext(aws, "AWS", "Compute substrate. Image grows ~30 MB to hold Tailscale binaries; no other AWS-side change.", $tags="external")
+System_Ext(tailscale, "Tailscale", "NEW dependency: mesh VPN brokers Lambda↔laptop reachability. Control plane + DERP relays.", $tags="critical")
+System_Ext(laptop_net, "Operator's laptop home network", "NEW dependency: tinyproxy runs here; outbound NIC is the residential ISP source.", $tags="critical")
+Rel(operator, curator_system, "Configures topics, triggers manual runs, asks queries", "curator CLI", $tags="static")
+Rel(curator_system, doppler, "Now reads TS_AUTHKEY, LAPTOP_TAILNET_IP, TINYPROXY_PORT in addition to prior keys", "HTTPS", $tags="blast")
+Rel(curator_system, tailscale, "NEW: authenticates, joins tailnet on every cold-start", "HTTPS", $tags="blast")
+Rel(curator_system, laptop_net, "NEW: routes outbound HTTP through tinyproxy on laptop tailnet IP", "Tailscale tunnel", $tags="blast")
+Rel(laptop_net, reddit, "NEW egress path: fetches with source IP = residential ISP", "HTTPS", $tags="blast")
+Rel(curator_system, notebooklm, "Uploads digest.md (unchanged — direct HTTPS, no proxy)", "HTTPS", $tags="static")
+Rel(curator_system, aws, "Runs on Lambda, scheduled by EventBridge (unchanged)", "AWS APIs", $tags="static")
+Rel(operator, notebooklm, "Asks grounded queries (unchanged)", "", $tags="static")
+SHOW_LEGEND()
+@enduml
