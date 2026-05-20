@@ -100,7 +100,9 @@ def _start_tailscale() -> None:
     else:
         raise RuntimeError("tailscaled control socket did not appear within 10s")
 
-    subprocess.run(
+    # Don't use check=True here: CalledProcessError's repr includes the full argv,
+    # which includes the auth key — would leak it into CloudWatch on any failure.
+    up = subprocess.run(
         [
             "tailscale",
             f"--socket={TAILSCALED_SOCKET}",
@@ -108,9 +110,14 @@ def _start_tailscale() -> None:
             f"--authkey={authkey}",
             "--hostname=scrape-news-curator-lambda",
         ],
-        check=True,
+        check=False,
+        capture_output=True,
         timeout=30,
     )
+    if up.returncode != 0:
+        stderr_tail = (up.stderr.decode().strip() if up.stderr else "").splitlines()
+        last = stderr_tail[-1] if stderr_tail else "no stderr"
+        raise RuntimeError(f"tailscale up failed (exit {up.returncode}): {last}")
     logger.info("tailscaled up; SOCKS5 server on localhost:%d", TAILSCALED_SOCKS5_PORT)
 
 
