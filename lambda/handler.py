@@ -114,6 +114,43 @@ def _start_tailscale() -> None:
     logger.info("tailscaled up; SOCKS5 server on localhost:%d", TAILSCALED_SOCKS5_PORT)
 
 
+def _wait_for_tailnet_peer(peer_ip: str, timeout_s: int = 20) -> None:
+    """Block until tailscaled can reach the given tailnet IP, or timeout.
+
+    `tailscale up` returns once the node has registered with the control plane,
+    but learning OTHER peers' addresses + completing WireGuard handshake is
+    asynchronous. Without this gate, the first SOCKS5 CONNECT after `up` often
+    fails with `0x01 General SOCKS server failure` because tailscaled hasn't
+    finished peer discovery for the destination IP.
+    """
+    import subprocess
+    import time
+
+    deadline = time.time() + timeout_s
+    last_err = None
+    while time.time() < deadline:
+        try:
+            subprocess.run(
+                [
+                    "tailscale", f"--socket={TAILSCALED_SOCKET}",
+                    "ping", "--c=1", "--timeout=3s", peer_ip,
+                ],
+                check=True, capture_output=True, timeout=5,
+            )
+            logger.info("tailnet peer %s reachable", peer_ip)
+            return
+        except subprocess.CalledProcessError as e:
+            last_err = (e.stderr.decode().strip() if e.stderr else "").splitlines()[-1:]
+            last_err = last_err[0] if last_err else "ping failed"
+        except subprocess.TimeoutExpired:
+            last_err = "ping cmd timeout"
+        time.sleep(0.5)
+    logger.warning(
+        "tailnet peer %s not reachable after %ds: %s — proceeding anyway",
+        peer_ip, timeout_s, last_err or "unknown",
+    )
+
+
 def _start_proxy_bridge(local_port: int, laptop_ip: str, laptop_port: int) -> None:
     """Listen on localhost:<local_port> and forward each connection through SOCKS5.
 
@@ -208,6 +245,7 @@ def _configure_egress() -> None:
         return
 
     _start_tailscale()
+    _wait_for_tailnet_peer(laptop_ip)
     _start_proxy_bridge(
         local_port=BRIDGE_LOCAL_PORT,
         laptop_ip=laptop_ip,
