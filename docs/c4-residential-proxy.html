@@ -47,6 +47,7 @@
   </p>
 
   <nav class="toc">
+    <a href="#orient">Orientation · where each entity lives</a>
     <a href="#l1">L1 · Context</a>
     <a href="#l2">L2 · Container</a>
     <a href="#l3">L3 · Component</a>
@@ -54,6 +55,117 @@
     <a href="#seq">Sequence · Cold start + first fetch</a>
     <a href="#blast">Blast radius · the plan as a visual diff</a>
   </nav>
+
+  <h2 id="orient">Orientation · where each entity lives <span class="lvl">software vs hardware</span></h2>
+  <p class="section-blurb">
+    Before the formal C4 hierarchy, a one-glance map of <em>where each moving part physically lives</em>. The key mental-model upgrade this section delivers: <strong>a Tailscale node is a software identity</strong> (a running <code>tailscaled</code> process + its registration in the tailnet roster), <strong>not a piece of hardware</strong>. Your laptop runs one <code>tailscaled</code> persistently — contributes one node. Each Lambda cold-start runs its own fresh <code>tailscaled</code> in a fresh container — contributes a fresh node with a fresh tailnet IP that exists only for the lifetime of that invocation. Hence two distinct <code>tailscaled</code>s appear below, in completely different physical locations, peering with each other through Tailscale's cloud control plane.
+  </p>
+
+  <div class="callout" style="margin: 0.75rem 0 1.25rem;">
+    <strong>Entity inventory</strong> — what each labeled box in the diagram is and how long it lives:
+    <div style="overflow-x: auto; margin-top: 8px;">
+    <table style="width:100%; border-collapse:collapse; font-size:0.88em;">
+      <thead>
+        <tr style="border-bottom: 1px solid var(--border);">
+          <th style="text-align:left; padding:6px 8px;">Entity</th>
+          <th style="text-align:left; padding:6px 8px;">Physical location</th>
+          <th style="text-align:left; padding:6px 8px;">Lifetime</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td style="padding:4px 8px;">Operator's laptop</td><td style="padding:4px 8px;">Your apartment</td><td style="padding:4px 8px;">Years (hardware)</td></tr>
+        <tr><td style="padding:4px 8px;">WSL2 Linux</td><td style="padding:4px 8px;">Virtualized inside Windows host</td><td style="padding:4px 8px;">Months — dies on Windows reboot or WSL idle-shutdown</td></tr>
+        <tr><td style="padding:4px 8px;"><code>tailscaled</code> (laptop)</td><td style="padding:4px 8px;">Process inside WSL2</td><td style="padding:4px 8px;">As long as WSL2 stays awake · stable tailnet IP <code>100.99.104.104</code></td></tr>
+        <tr><td style="padding:4px 8px;"><code>tinyproxy</code></td><td style="padding:4px 8px;">Process inside WSL2 · bound to laptop's tailnet IP:8888</td><td style="padding:4px 8px;">As long as systemd keeps it up</td></tr>
+        <tr><td style="padding:4px 8px;">Home router + ISP</td><td style="padding:4px 8px;">Your apartment / ISP infra</td><td style="padding:4px 8px;">Years · provides the residential IP Reddit sees</td></tr>
+        <tr><td style="padding:4px 8px;">EventBridge rule</td><td style="padding:4px 8px;">AWS cloud (managed service)</td><td style="padding:4px 8px;">Until deleted · fires daily 06:00 UTC</td></tr>
+        <tr><td style="padding:4px 8px;">Lambda function (definition)</td><td style="padding:4px 8px;">AWS cloud (Lambda service)</td><td style="padding:4px 8px;">Until deleted · recipe for execution envs</td></tr>
+        <tr><td style="padding:4px 8px;">Lambda execution env</td><td style="padding:4px 8px;">AWS cloud · fresh container per invocation</td><td style="padding:4px 8px;"><strong>Seconds to minutes</strong> · dies when invocation ends</td></tr>
+        <tr><td style="padding:4px 8px;"><code>tailscaled</code> (Lambda)</td><td style="padding:4px 8px;">Process inside the execution env</td><td style="padding:4px 8px;">Same as exec env · <strong>fresh tailnet IP per cold-start</strong></td></tr>
+        <tr><td style="padding:4px 8px;">Bridge :8889</td><td style="padding:4px 8px;">Python thread inside the execution env</td><td style="padding:4px 8px;">Same as exec env · HTTP→SOCKS5 adapter</td></tr>
+        <tr><td style="padding:4px 8px;"><code>news_curator</code></td><td style="padding:4px 8px;">Python process inside the execution env</td><td style="padding:4px 8px;">Same as exec env · the Reddit→NotebookLM pipeline</td></tr>
+        <tr><td style="padding:4px 8px;">Tailscale control plane</td><td style="padding:4px 8px;">Tailscale's cloud</td><td style="padding:4px 8px;">Always on · auth + peer discovery, never sees data</td></tr>
+        <tr><td style="padding:4px 8px;">DERP relays</td><td style="padding:4px 8px;">Tailscale's cloud (global)</td><td style="padding:4px 8px;">Always on · fallback when direct UDP can't punch NAT</td></tr>
+        <tr><td style="padding:4px 8px;">Doppler API</td><td style="padding:4px 8px;">Doppler's cloud</td><td style="padding:4px 8px;">Always on · holds <code>TS_AUTHKEY</code> + other secrets</td></tr>
+        <tr><td style="padding:4px 8px;">Reddit, NotebookLM</td><td style="padding:4px 8px;">Their respective clouds</td><td style="padding:4px 8px;">Always on · data source + destination</td></tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <pre class="mermaid">
+flowchart TB
+    subgraph apartment["Your apartment"]
+        subgraph laptop["Laptop hardware"]
+            subgraph wsl["WSL2 Linux"]
+                ts_lap["tailscaled (laptop)<br/>node · scrape-egress-laptop<br/>tailnet IP · 100.99.104.104"]
+                tp["tinyproxy<br/>listening on 100.99.104.104:8888"]
+            end
+        end
+        router["Home router · NAT"]
+        isp["Residential ISP gateway"]
+    end
+
+    subgraph aws["AWS cloud"]
+        eb["EventBridge<br/>cron 0 6 * * ? *"]
+        subgraph lambda_def["Lambda function · definition"]
+            subgraph lambda_env["Lambda execution env · EPHEMERAL · fresh per cold-start"]
+                ts_lam["tailscaled (Lambda)<br/>node · scrape-news-curator-lambda-N<br/>tailnet IP · 100.x.x.x · changes each invocation"]
+                br["bridge :8889<br/>Python thread"]
+                nc["news_curator<br/>Python process"]
+            end
+        end
+    end
+
+    subgraph tailscale_cloud["Tailscale's cloud · always-on services"]
+        cp["Control plane<br/>auth + peer discovery"]
+        derp["DERP relays<br/>fallback when direct UDP fails"]
+    end
+
+    subgraph other_cloud["Other clouds"]
+        doppler["Doppler API"]
+        reddit["Reddit"]
+        nlm["NotebookLM"]
+    end
+
+    eb -->|1 · invoke daily| nc
+    nc -->|2 · fetch secrets at cold-start| doppler
+    ts_lap -.->|0 · registered once during Phase 0a| cp
+    ts_lam -.->|3 · register node via TS_AUTHKEY| cp
+    cp -.->|tells each peer where the other is| ts_lam
+    cp -.->|tells each peer where the other is| ts_lap
+
+    nc -->|4 · requests.get HTTP_PROXY=:8889| br
+    br -->|5 · SOCKS5 CONNECT 100.99.104.104:8888| ts_lam
+    ts_lam ==>|6 · WireGuard tunnel · UDP direct OR via DERP| ts_lap
+    ts_lap -->|7 · local TCP delivery| tp
+    tp -->|8 · HTTPS · source IP = residential ISP| router
+    router --> isp
+    isp -->|9 · public internet| reddit
+
+    nc -->|10 · HTTPS direct · NOT via the proxy chain| nlm
+
+    classDef lambda_node fill:#FFE0B3,stroke:#CC8800,color:#663300
+    classDef laptop_node fill:#E0F0FF,stroke:#3366AA,color:#003366
+    classDef cloud fill:#F2F2F2,stroke:#666,color:#333
+    class ts_lam,br,nc lambda_node
+    class ts_lap,tp laptop_node
+    class cp,derp,doppler,reddit,nlm,eb cloud
+  </pre>
+  <p class="diagram-source">
+    rendered client-side via Mermaid · ad-hoc flowchart per the <code>diagram</code> preference (Mermaid for ad-hoc/inline illustrations).
+  </p>
+
+  <div class="callout">
+    <strong>Reading rules</strong>:
+    <ul style="margin: 6px 0 0 18px; padding: 0;">
+      <li><strong>Boxes</strong> = physical location. Anything inside a box runs on that substrate.</li>
+      <li><strong>Solid arrows</strong> = data flow on a typical scrape (numbered 1→10).</li>
+      <li><strong>Dashed arrows</strong> = control-plane chatter (registration, peer discovery) — these go to Tailscale's cloud, not directly between peers.</li>
+      <li><strong>Thick arrow (step 6)</strong> = the WireGuard tunnel — the only flow that crosses between your apartment and AWS directly. Encrypted, may be relayed by DERP if direct UDP can't punch NAT.</li>
+      <li><strong>Two tailscaled boxes on purpose</strong>: each one is its own node, peering with the other through Tailscale's control plane. The laptop's is persistent (one IP forever); the Lambda's is ephemeral (new IP per cold-start, auto-removed when the invocation ends).</li>
+    </ul>
+  </div>
 
   <h2 id="l1">L1 · Context <span class="lvl">system as black box</span></h2>
   <p class="section-blurb">
