@@ -711,6 +711,103 @@ class NotebookLMUploader:
             self._doppler.maybe_push_back()
 
 
+# --------- feed publisher ---------
+
+FEED_TOPIC = os.environ.get("FEED_TOPIC", "scraping")
+FEED_TOPIC_NAME = os.environ.get("FEED_TOPIC_NAME", "Scraping")
+NOTEBOOKLM_URL_TEMPLATE = "https://notebooklm.google.com/notebook/{notebook_id}"
+
+
+class FeedPublisher:
+    """Generate today's feed by querying NotebookLM, publish to S3.
+
+    Runs AFTER NotebookLMUploader.upload() · the notebook already has today's
+    fresh digest indexed. We ask NotebookLM for the top-5 items (same prompt
+    curator's laptop-side `feed` command used to use), parse the response,
+    render the per-topic feed markdown, and put it to S3 so the laptop's
+    curator can pull it without round-tripping through NotebookLM itself.
+
+    Canonical writer · laptop is read-only. If S3 upload fails, log a
+    warning · don't fail the Lambda invocation (we still uploaded the
+    digest successfully · the feed file will catch up tomorrow).
+    """
+
+    def __init__(self, notebook_id: str, topic: str, topic_name: str, bucket: str):
+        self.notebook_id = notebook_id
+        self.topic = topic
+        self.topic_name = topic_name
+        self.bucket = bucket
+
+    def publish_for_today(self) -> str | None:
+        """Generate + publish · returns the S3 key on success, None on failure."""
+        from feed_prompt import FEED_PROMPT, parse_feed_response, render_item
+
+        items = self._query_items(FEED_PROMPT, parse_feed_response)
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        body = self._render_markdown(today, items, render_item)
+        key = f"{self.topic}/{today}.md"
+
+        try:
+            import boto3
+            s3 = boto3.client("s3")
+            s3.put_object(
+                Bucket=self.bucket,
+                Key=key,
+                Body=body.encode("utf-8"),
+                ContentType="text/markdown",
+            )
+            logger.info("feed: published %s (%d items, %d bytes) to s3://%s/%s",
+                        key, len(items), len(body), self.bucket, key)
+            return key
+        except Exception as e:  # noqa: BLE001
+            logger.warning("feed: S3 publish failed (non-fatal): %s", e)
+            return None
+
+    def _query_items(self, prompt: str, parser) -> list[dict]:
+        import asyncio
+        from notebooklm import NotebookLMClient
+
+        async def _run() -> str:
+            async with await NotebookLMClient.from_storage() as client:
+                result = await client.chat.ask(self.notebook_id, prompt)
+            # Result shape varies by notebooklm-py version · try common paths
+            answer = getattr(result, "answer", None)
+            if not answer and isinstance(result, dict):
+                answer = result.get("answer") or result.get("response") or ""
+            return answer or str(result)
+
+        try:
+            answer = asyncio.run(_run())
+        except Exception as e:  # noqa: BLE001
+            logger.warning("feed: NotebookLM query failed (non-fatal): %s", e)
+            return []
+        return parser(answer)
+
+    def _render_markdown(self, today: str, items: list[dict], render_item) -> str:
+        notebooklm_url = NOTEBOOKLM_URL_TEMPLATE.format(notebook_id=self.notebook_id)
+        lines = [
+            "---",
+            f"date: {today}",
+            f"topics_included: [{self.topic}]",
+            f"generated_at: {datetime.now(timezone.utc).isoformat()}",
+            f"item_count: {len(items)}",
+            "generated_at_commit: lambda",
+            "---",
+            "",
+            f"# Newsfeed — {today}",
+            "",
+            f"## {self.topic}  ([{self.topic_name} notebook ↗]({notebooklm_url}))",
+            "",
+        ]
+        if not items:
+            lines.append("_(no notable items with citable URLs today)_")
+        else:
+            for item in items:
+                lines.append(render_item(item))
+        lines.append("")
+        return "\n".join(lines)
+
+
 # --------- pipeline ---------
 
 def _source_from_cfg(cfg: dict) -> Source:
@@ -750,17 +847,38 @@ def main() -> None:
     print(f"  wrote {DIGEST_PATH} ({n} posts)")
 
     notebook_id = os.environ.get("NOTEBOOKLM_NOTEBOOK_ID")
+    upload_ok = False
     if notebook_id:
         print(f"\nUploading to NotebookLM (notebook {notebook_id})...")
         try:
             NotebookLMUploader(notebook_id).upload(DIGEST_PATH)
             print("  upload complete")
+            upload_ok = True
         except ImportError:
             print("  notebooklm-py not installed; run: pip install 'notebooklm-py[browser]'")
         except Exception as e:
             print(f"  upload failed: {e}")
     else:
         print("\n(set NOTEBOOKLM_NOTEBOOK_ID to auto-upload digest.md after each run)")
+
+    # Publish today's feed to S3 if upload succeeded · queries the notebook
+    # we just wrote to · feed_bucket env decides where. Lambda is the
+    # canonical writer; laptop curator pulls from this bucket read-only.
+    feed_bucket = os.environ.get("FEED_BUCKET")
+    if upload_ok and feed_bucket:
+        print(f"\nPublishing feed to s3://{feed_bucket}/{FEED_TOPIC}/...")
+        try:
+            key = FeedPublisher(
+                notebook_id=notebook_id,
+                topic=FEED_TOPIC,
+                topic_name=FEED_TOPIC_NAME,
+                bucket=feed_bucket,
+            ).publish_for_today()
+            print(f"  published: {key}" if key else "  publish: skipped (see logs)")
+        except Exception as e:
+            print(f"  publish failed: {e}")
+    elif upload_ok and not feed_bucket:
+        print("\n(set FEED_BUCKET to auto-publish today's feed to S3)")
 
 
 if __name__ == "__main__":

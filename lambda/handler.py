@@ -47,15 +47,22 @@ def _fetch_doppler_secrets() -> None:
     with urllib.request.urlopen(req, timeout=10) as r:
         secrets = json.load(r)
 
+    # Skip AWS_* keys · they're laptop credentials for the deploy CLI, NOT for
+    # the Lambda runtime. The Lambda has its own instance role; if AWS_* envs
+    # are set they OVERRIDE the role and cause InvalidToken errors on boto3
+    # calls (e.g., FeedPublisher's S3 PutObject). Let the Lambda runtime set
+    # AWS_REGION etc. itself from the function's actual deployed region.
     n = 0
     for k, v in secrets.items():
         if k.startswith("DOPPLER_"):
+            continue
+        if k.startswith("AWS_"):
             continue
         if not isinstance(v, str):
             continue
         os.environ[k] = v
         n += 1
-    logger.info("fetched %d secrets from Doppler", n)
+    logger.info("fetched %d secrets from Doppler (AWS_* skipped to preserve role)", n)
 
 
 def _prepare_writable_layout() -> None:
