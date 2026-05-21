@@ -1,0 +1,112 @@
+@startuml C4_Class_NotebookLM
+title UML L4 — Class diagram: NotebookLM upload surface\nThe actual code-level objects involved · what we wrote vs what notebooklm-py exposes.
+
+skinparam backgroundColor #14171c
+skinparam shadowing false
+skinparam defaultFontColor #e8eaed
+skinparam ArrowColor #888888
+skinparam ArrowFontColor #9aa3ad
+skinparam noteBackgroundColor #1c2026
+skinparam noteBorderColor #5eead4
+skinparam noteFontColor #e8eaed
+
+skinparam class {
+    BackgroundColor #1c2026
+    BorderColor #5eead4
+    FontColor #e8eaed
+    AttributeFontColor #e8eaed
+    HeaderBackgroundColor #1c2026
+    StereotypeFontColor #9aa3ad
+}
+
+skinparam class<<dep>> {
+    BackgroundColor #14171c
+    BorderColor #5eead4
+    FontColor #e8eaed
+    HeaderBackgroundColor #14171c
+    AttributeFontColor #e8eaed
+    StereotypeFontColor #5eead4
+}
+
+skinparam class<<state>> {
+    BackgroundColor #0b0d10
+    BorderColor #fbbf24
+    FontColor #e8eaed
+    HeaderBackgroundColor #0b0d10
+    AttributeFontColor #e8eaed
+    StereotypeFontColor #fbbf24
+}
+
+class NotebookLMUploader <<our code>> {
+    + notebook_id: str
+    --
+    + __init__(notebook_id: str)
+    + upload(file_path: str) -> None
+    --
+    note: lazy-imports NotebookLMClient
+    note: rotates · deletes prior
+          source with same title
+          before add_file
+}
+
+class "_ensure_notebooklm_storage()" as ensure_storage <<our code>> {
+    Module-level function
+    news_curator.py:512
+    --
+    Reads os.environ["NOTEBOOKLM_STORAGE_STATE"]
+    Writes ~/.notebooklm/storage_state.json
+    chmod 0o600
+    No-op if file present and non-empty
+}
+
+class NotebookLMClient <<dep>> {
+    + sources: SourcesNamespace
+    --
+    + {static} from_storage() -> NotebookLMClient
+    + __aenter__() -> Self
+    + __aexit__(exc_type, exc, tb) -> None
+    --
+    note: async context manager
+    note: holds the Playwright
+          browser handle for the
+          async-with lifetime
+}
+
+class SourcesNamespace <<dep>> {
+    Methods we use
+    (not exhaustive)
+    --
+    + list(notebook_id: str) -> List<Source>
+    + delete(notebook_id: str, source_id: str) -> None
+    + add_file(notebook_id: str, file_path: str, wait: bool = True) -> Source
+}
+
+class Source <<dep>> {
+    + id: str
+    + title: str
+    + ... (other metadata
+        we don't currently read)
+}
+
+class StorageState <<state>> {
+    ~/.notebooklm/storage_state.json
+    --
+    Cookie blob written by
+    `notebooklm login` (laptop)
+    OR by _ensure_notebooklm_storage
+    (Lambda · from env)
+    --
+    Read by NotebookLMClient.from_storage()
+    Lifetime · weeks · until Google rotates
+    the underlying session cookies
+}
+
+NotebookLMUploader --> ensure_storage : "calls in upload()"
+NotebookLMUploader ..> NotebookLMClient : "lazy import + from_storage()"
+NotebookLMClient o-- SourcesNamespace : "exposes as .sources"
+SourcesNamespace ..> Source : "returns from list/add_file"
+NotebookLMClient ..> StorageState : "reads cookies"
+ensure_storage ..> StorageState : "writes if missing"
+NotebookLMUploader ..> SourcesNamespace : "list · delete · add_file"
+
+@enduml

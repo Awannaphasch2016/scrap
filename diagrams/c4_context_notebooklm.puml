@@ -1,0 +1,24 @@
+@startuml C4_Context_NotebookLM
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Context.puml
+
+title C4 Level 1 — Context: NotebookLM integration\nWho uses the integration, and which external systems it depends on.
+
+AddElementTag("ours", $bgColor="#1c2026", $fontColor="#e8eaed", $borderColor="#5eead4", $legendText="Our system")
+AddElementTag("external", $bgColor="#0b0d10", $fontColor="#e8eaed", $borderColor="#9aa3ad", $legendText="External system")
+
+Person(operator, "Operator", "Owns the storage_state cookie blob. Asks curated questions via curator CLI, triggers digest refreshes, periodically re-authenticates via `notebooklm login`.")
+System(curator_system, "Scraping News Curator + curator CLI", "Lambda-side upload pipeline plus laptop-side Q&A CLI. Both reach NotebookLM through notebooklm-py + Playwright.", $tags="ours")
+
+System_Ext(notebooklm, "NotebookLM", "Google product · notebook with a sources collection and a chat surface. Holds digest.md as one source per topic.", $tags="external")
+System_Ext(google_auth, "Google Accounts", "accounts.google.com — handles login on first auth and redirects whenever the storage_state cookies expire.", $tags="external")
+System_Ext(doppler, "Doppler", "Secrets vault · stores NOTEBOOKLM_STORAGE_STATE (cookie blob) + NOTEBOOKLM_NOTEBOOK_ID for the Lambda cold-start path.", $tags="external")
+
+Rel(operator, curator_system, "Runs curator ask · refresh · open\nperiodically runs `notebooklm login`")
+Rel(curator_system, notebooklm, "Upload digest.md as a source · query chat", "Playwright via notebooklm-py")
+Rel(curator_system, google_auth, "Inherits a 302 redirect when cookies expire\n(failure path · surfaces as Authentication expired)", "via NotebookLM")
+Rel(curator_system, doppler, "Lambda-side · reads NOTEBOOKLM_STORAGE_STATE\n+ NOTEBOOKLM_NOTEBOOK_ID at cold start", "HTTPS")
+Rel(operator, google_auth, "`notebooklm login` browser SSO writes\n~/.notebooklm/storage_state.json", "Playwright")
+
+SHOW_LEGEND()
+@enduml

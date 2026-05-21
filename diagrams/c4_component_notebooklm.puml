@@ -1,0 +1,44 @@
+@startuml C4_Component_NotebookLM
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Component.puml
+
+title C4 Level 3 — Components: NotebookLM upload path\nInside the Lambda container · NotebookLMUploader → notebooklm-py NotebookLMClient → Playwright.
+
+AddElementTag("ours", $bgColor="#1c2026", $fontColor="#e8eaed", $borderColor="#5eead4", $legendText="Our code (scrap repo)")
+AddElementTag("dep", $bgColor="#14171c", $fontColor="#e8eaed", $borderColor="#5eead4", $legendText="notebooklm-py library")
+AddElementTag("state", $bgColor="#0b0d10", $fontColor="#e8eaed", $borderColor="#fbbf24", $legendText="Local state (filesystem)")
+AddElementTag("external", $bgColor="#0b0d10", $fontColor="#e8eaed", $borderColor="#9aa3ad", $legendText="External")
+
+System_Ext(doppler, "Doppler API", "Returns NOTEBOOKLM_STORAGE_STATE + NOTEBOOKLM_NOTEBOOK_ID", $tags="external")
+System_Ext(playwright, "Playwright + Chromium", "Headless browser drives notebooklm.google.com", $tags="external")
+System_Ext(notebooklm, "NotebookLM web", "Receives source uploads · serves chat", $tags="external")
+
+Container_Boundary(lambda, "scrape-news-curator Lambda container") {
+    Component(handler, "lambda_handler", "Python · handler.py", "Cold-start orchestration · Doppler fetch · residential-proxy setup · invokes news_curator.main().", $tags="ours")
+    Component(pipeline, "news_curator.main", "Python · news_curator.py", "Reddit fetch loop · writes /tmp/digest.md · then invokes NotebookLMUploader if NOTEBOOKLM_NOTEBOOK_ID is set.", $tags="ours")
+    Component(uploader, "NotebookLMUploader", "Python class · news_curator.py:529", "__init__(notebook_id) and upload(file_path). Lazy-imports NotebookLMClient inside upload() to keep cold-start light.", $tags="ours")
+    Component(ensure_storage, "_ensure_notebooklm_storage()", "Python helper · news_curator.py:512", "Materializes NOTEBOOKLM_STORAGE_STATE env to ~/.notebooklm/storage_state.json with 0o600 perms · skip if file already present and non-empty.", $tags="ours")
+    ComponentDb(storage_file, "storage_state.json", "JSON file · ~/.notebooklm/", "Cookie blob · the single source of auth for every NotebookLM call.", $tags="state")
+    ComponentDb(digest_file, "digest.md", "Markdown · /tmp/", "Aggregated Reddit content · the source file uploaded to NotebookLM.", $tags="state")
+}
+
+Container_Boundary(nbl, "notebooklm-py library · lazy-imported") {
+    Component(client, "NotebookLMClient", "Python async class", "from_storage() returns an async context manager. Holds the Playwright browser handle for the conversation lifetime.", $tags="dep")
+    Component(sources, "client.sources", "Python namespace on the client", "list(notebook_id) · delete(notebook_id, source_id) · add_file(notebook_id, path, wait=True)", $tags="dep")
+}
+
+Rel(handler, pipeline, "import + run main()", "in-process")
+Rel(pipeline, digest_file, "write 81 posts + comments")
+Rel(pipeline, uploader, "NotebookLMUploader(notebook_id).upload(digest_path)")
+Rel(uploader, ensure_storage, "calls before any client work")
+Rel(ensure_storage, doppler, "reads NOTEBOOKLM_STORAGE_STATE\n(injected at cold start)")
+Rel(ensure_storage, storage_file, "writes blob if file is missing\nor empty (chmod 0o600)")
+Rel(uploader, client, "NotebookLMClient.from_storage()\nasync with ...")
+Rel(client, storage_file, "reads cookie blob")
+Rel(client, sources, "exposes .sources namespace")
+Rel(uploader, sources, "list · delete prior digest.md · add_file new")
+Rel(sources, playwright, "drives browser actions")
+Rel(playwright, notebooklm, "navigates · types · uploads · waits for indexing")
+
+SHOW_LEGEND()
+@enduml
