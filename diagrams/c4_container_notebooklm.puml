@@ -1,0 +1,50 @@
+@startuml C4_Container_NotebookLM
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Container.puml
+
+title C4 Level 2 — NotebookLM integration workflow\nTwo callers (Lambda upload + laptop curator query) share the same notebooklm-py package + Playwright + storage_state.json substrate.
+
+AddElementTag("ours", $bgColor="#1c2026", $fontColor="#e8eaed", $borderColor="#5eead4", $legendText="Our code — committed in scrap or curator")
+AddElementTag("dep", $bgColor="#14171c", $fontColor="#e8eaed", $borderColor="#5eead4", $legendText="Local dependency — installed via pip")
+AddElementTag("state", $bgColor="#0b0d10", $fontColor="#e8eaed", $borderColor="#fbbf24", $legendText="Local state — auth blob / cookie store")
+AddElementTag("external", $bgColor="#0b0d10", $fontColor="#e8eaed", $borderColor="#9aa3ad", $legendText="External system")
+
+Person(operator, "Operator (you)", "Runs `curator ask`. Owns the storage_state blob.")
+
+System_Boundary(laptop_b, "Operator's laptop (WSL2)") {
+    Container(curator_cli, "curator CLI", "Node.js", "ask / search / refresh / open. notebooklm.mjs shells out to `notebooklm` CLI.", $tags="ours")
+    Container(nbl_cli, "notebooklm CLI", "Python (notebooklm-py)", "`notebooklm ask -n <id> --json <query>` — Playwright-driven query.", $tags="dep")
+    Container(storage_local, "storage_state.json", "JSON file", "~/.notebooklm/storage_state.json — written by `notebooklm login`. Cookie blob.", $tags="state")
+}
+
+System_Boundary(aws_b, "AWS Lambda (cron 06:00 UTC)") {
+    Container(lambda_handler, "Lambda handler", "Python 3.12", "handler.py orchestrates Doppler fetch + proxy chain + news_curator.main().", $tags="ours")
+    Container(news_curator, "news_curator.py", "Python", "Reddit fetch → /tmp/digest.md → NotebookLMUploader.upload(digest_path).", $tags="ours")
+    Container(nbl_lib, "notebooklm-py library", "Python (NotebookLMClient)", "Lazy-imported by NotebookLMUploader. Playwright-driven async client.", $tags="dep")
+    Container(storage_lambda, "storage_state.json", "JSON file", "/tmp/.notebooklm/storage_state.json — materialized from NOTEBOOKLM_STORAGE_STATE env at cold start.", $tags="state")
+}
+
+System_Ext(playwright, "Playwright + Chromium", "Headless browser launched by notebooklm-py to drive the NotebookLM web UI.", $tags="external")
+System_Ext(notebooklm, "NotebookLM web app", "notebooklm.google.com — sources + chat per notebook.", $tags="external")
+System_Ext(google_auth, "Google accounts", "accounts.google.com — redirects on expired storage_state cookies.", $tags="external")
+System_Ext(doppler, "Doppler", "scrape/dev — holds NOTEBOOKLM_STORAGE_STATE + NOTEBOOKLM_NOTEBOOK_ID.", $tags="external")
+
+Rel(operator, curator_cli, "curator ask scraping <query>", "shell")
+Rel(operator, storage_local, "Periodically refreshes via\n`notebooklm login` (browser SSO)", "Playwright")
+
+Rel(curator_cli, nbl_cli, "spawnSync notebooklm\n[ask, -n, id, --json, q]", "child process")
+Rel(nbl_cli, storage_local, "reads cookie blob", "filesystem")
+Rel(nbl_cli, playwright, "launches browser with cookies", "Playwright API")
+
+Rel(lambda_handler, news_curator, "import + run main()", "in-process")
+Rel(news_curator, nbl_lib, "NotebookLMClient.from_storage()\nsources.list / delete / add_file", "Python import")
+Rel(news_curator, storage_lambda, "_ensure_notebooklm_storage()\nwrites env blob to disk (0o600)", "filesystem")
+Rel(news_curator, doppler, "reads NOTEBOOKLM_STORAGE_STATE\n+ NOTEBOOKLM_NOTEBOOK_ID", "env injection at cold start")
+Rel(nbl_lib, storage_lambda, "reads cookie blob", "filesystem")
+Rel(nbl_lib, playwright, "launches browser with cookies", "Playwright API")
+
+Rel(playwright, notebooklm, "navigates to notebook URL\ntypes query / uploads source", "HTTPS (Chromium)")
+Rel(notebooklm, google_auth, "redirects when cookies expire\n→ 'Authentication expired or invalid'", "302")
+
+SHOW_LEGEND()
+@enduml
