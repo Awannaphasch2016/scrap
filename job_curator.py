@@ -41,6 +41,8 @@ from typing import Iterable
 import requests
 
 from curator.core.fetcher import Fetcher, _parse_iso, _parse_rfc822, _proxies, _strip_html
+from curator.core.notebooklm import NotebookLMUploader
+from curator.core.s3 import publish_to_s3
 from curator.core.store import Store
 from curator.core.types import Item, Source
 
@@ -638,21 +640,9 @@ def _render_items_md(scored: list[tuple[Item, float, str]]) -> str:
     return "\n".join(lines)
 
 
-# --------- NotebookLM upload + S3 publish (shared shape with news_curator) ---------
-
-# Reuse news_curator's NotebookLMUploader machinery (storage_state + Doppler pull/push)
-# verbatim · jobs only differ by the notebook id and the digest file we hand it.
-def _upload_to_notebooklm(file_path: str, notebook_id: str) -> None:
-    from news_curator import NotebookLMUploader
-    NotebookLMUploader(notebook_id).upload(file_path)
-
-
-def _publish_to_s3(local_path: str, bucket: str, key: str) -> None:
-    import boto3
-    s3 = boto3.client("s3")
-    body = Path(local_path).read_bytes()
-    s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType="text/markdown")
-    logger.info("s3: published %s → s3://%s/%s (%d bytes)", local_path, bucket, key, len(body))
+# --------- NotebookLM upload + S3 publish ---------
+# NotebookLMUploader imported from curator.core.notebooklm (Stage 4).
+# publish_to_s3 imported from curator.core.s3 (Stage 4).
 
 
 # --------- pipeline ---------
@@ -721,7 +711,7 @@ def main() -> None:
     if notebook_id:
         print(f"\nUploading corpus to NotebookLM (notebook {notebook_id})...")
         try:
-            _upload_to_notebooklm(DIGEST_PATH, notebook_id)
+            NotebookLMUploader(notebook_id).upload(DIGEST_PATH)
             print("  upload complete")
         except ImportError:
             print("  notebooklm-py not installed; pip install 'notebooklm-py[browser]'")
@@ -740,7 +730,7 @@ def main() -> None:
             (top_path, f"jobs/{date_str}-top{TOP_N}.md"),
         ):
             try:
-                _publish_to_s3(local, bucket, key)
+                publish_to_s3(local, bucket, key)
                 print(f"  s3://{bucket}/{key}")
             except Exception as e:
                 print(f"  publish failed for {key}: {e}")
