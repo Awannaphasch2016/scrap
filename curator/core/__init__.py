@@ -18,9 +18,11 @@ from curator.core.fetcher import (
     _strip_html,
 )
 from curator.core.notebooklm import DopplerStorage, NotebookLMUploader
+from curator.core.pipeline import run
 from curator.core.render import _humanize_age
 from curator.core.s3 import publish_to_s3
 from curator.core.store import Store
+from curator.core.topic_config import TopicConfig
 from curator.core.types import Item, Source
 
 __all__ = [
@@ -31,4 +33,5 @@ __all__ = [
     "NotebookLMUploader", "DopplerStorage",
     "publish_to_s3",
     "_humanize_age",
+    "TopicConfig", "run",
 ]
