@@ -30,8 +30,19 @@ logger = logging.getLogger(__name__)
 # Local materialization target for the storage_state cookie blob. Lives under
 # $HOME so the Lambda handler can redirect HOME=/tmp once and never need a
 # code change here.
-NOTEBOOKLM_STORAGE_PATH = Path.home() / ".notebooklm" / "storage_state.json"
+#
+# IMPORTANT · this is a function, not a module-level constant. Reason: at
+# Lambda cold-start, `curator.core.__init__` re-exports from this module,
+# which means notebooklm.py is imported BEFORE the handler runs
+# `os.environ["HOME"] = "/tmp"`. A module-level `Path.home()` would freeze
+# to the Lambda runtime's default `/home/sbx_user…` (read-only) and every
+# subsequent write would fail with `[Errno 30] Read-only file system`.
+# Caller resolves the path at use time, AFTER HOME has been redirected.
 NOTEBOOKLM_STORAGE_SECRET = "NOTEBOOKLM_STORAGE_STATE"
+
+
+def _notebooklm_storage_path() -> Path:
+    return Path.home() / ".notebooklm" / "storage_state.json"
 
 
 def _ensure_notebooklm_storage() -> None:
@@ -42,14 +53,15 @@ def _ensure_notebooklm_storage() -> None:
     that path is preferred because it picks up cookie rotations pushed by other
     runs (or by the laptop) without redeploy.
     """
-    if NOTEBOOKLM_STORAGE_PATH.exists() and NOTEBOOKLM_STORAGE_PATH.stat().st_size > 0:
+    path = _notebooklm_storage_path()
+    if path.exists() and path.stat().st_size > 0:
         return
     blob = os.environ.get(NOTEBOOKLM_STORAGE_SECRET)
     if not blob:
         return
-    NOTEBOOKLM_STORAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    NOTEBOOKLM_STORAGE_PATH.write_text(blob, encoding="utf-8")
-    os.chmod(NOTEBOOKLM_STORAGE_PATH, 0o600)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(blob, encoding="utf-8")
+    os.chmod(path, 0o600)
 
 
 class DopplerStorage:
@@ -166,7 +178,7 @@ def _doppler_storage_or_none() -> "DopplerStorage | None":
         project=os.environ.get("DOPPLER_PROJECT", "scrape"),
         config=os.environ.get("DOPPLER_CONFIG", "dev"),
         secret_name=NOTEBOOKLM_STORAGE_SECRET,
-        local_path=NOTEBOOKLM_STORAGE_PATH,
+        local_path=_notebooklm_storage_path(),
     )
 
 
