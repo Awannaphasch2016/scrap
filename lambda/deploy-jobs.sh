@@ -92,12 +92,19 @@ else
 fi
 LAMBDA_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/${IAM_ROLE_NAME}"
 
-# Attach inline S3 policy so job_curator can put dated digests into JOBS_FEED_BUCKET.
-# Without this the boto3 put_object call fails with AccessDenied and the daily
-# archive silently doesn't update — surfaced only as a warning in CloudWatch.
+# Attach inline S3 policy so job_curator can put dated digests into the bucket
+# that the runtime will actually write to · this MUST match the runtime's
+# fallback chain or you get AccessDenied (the runtime resolves
+# os.environ["JOBS_FEED_BUCKET"] or os.environ["FEED_BUCKET"]). Without this
+# the boto3 put_object call fails and the daily archive silently doesn't
+# update — surfaced only as a warning in CloudWatch.
 echo "==> Ensuring S3 publish permission on Lambda role"
-JOBS_FEED_BUCKET=$(doppler secrets get JOBS_FEED_BUCKET --plain 2>/dev/null || echo "")
-if [[ -n "$JOBS_FEED_BUCKET" ]]; then
+JOBS_FEED_BUCKET_VAL=$(doppler secrets get JOBS_FEED_BUCKET --plain 2>/dev/null || echo "")
+if [[ -z "$JOBS_FEED_BUCKET_VAL" ]]; then
+    JOBS_FEED_BUCKET_VAL=$(doppler secrets get FEED_BUCKET --plain 2>/dev/null || echo "")
+    [[ -n "$JOBS_FEED_BUCKET_VAL" ]] && echo "    JOBS_FEED_BUCKET unset · using FEED_BUCKET=${JOBS_FEED_BUCKET_VAL} (matches runtime fallback)"
+fi
+if [[ -n "$JOBS_FEED_BUCKET_VAL" ]]; then
     TMP_S3_POLICY=$(mktemp)
     cat > "$TMP_S3_POLICY" <<JSON
 {
@@ -105,11 +112,11 @@ if [[ -n "$JOBS_FEED_BUCKET" ]]; then
   "Statement": [{
     "Effect": "Allow",
     "Action": ["s3:PutObject", "s3:PutObjectAcl"],
-    "Resource": "arn:aws:s3:::${JOBS_FEED_BUCKET}/jobs/*"
+    "Resource": "arn:aws:s3:::${JOBS_FEED_BUCKET_VAL}/jobs/*"
   }, {
     "Effect": "Allow",
     "Action": ["s3:ListBucket"],
-    "Resource": "arn:aws:s3:::${JOBS_FEED_BUCKET}"
+    "Resource": "arn:aws:s3:::${JOBS_FEED_BUCKET_VAL}"
   }]
 }
 JSON
@@ -117,9 +124,9 @@ JSON
         --policy-name "scrape-job-curator-s3" \
         --policy-document "file://$TMP_S3_POLICY" >/dev/null
     rm -f "$TMP_S3_POLICY"
-    echo "    granted s3:PutObject on arn:aws:s3:::${JOBS_FEED_BUCKET}/jobs/*"
+    echo "    granted s3:PutObject on arn:aws:s3:::${JOBS_FEED_BUCKET_VAL}/jobs/*"
 else
-    echo "    JOBS_FEED_BUCKET not set in Doppler — skipping S3 grant"
+    echo "    neither JOBS_FEED_BUCKET nor FEED_BUCKET set in Doppler — skipping S3 grant"
 fi
 
 echo "==> Creating/updating Lambda function"
