@@ -232,6 +232,10 @@ class Renderer:
             scored = store.items_for_source(
                 source.id, cutoff_ts, min_relevance=threshold,
             )
+            # Chronological within each source · matches the daily reader's
+            # mental model ("what landed today, newest first"). Relevance
+            # score is still displayed on each row as the colored chip.
+            scored.sort(key=lambda pair: -pair[0].published_at)
             total += len(scored)
             items_html: list[str] = []
             for item, score in scored:
@@ -314,12 +318,41 @@ def _render_items_md(scored: list[tuple[Item, float | None, str]]) -> str:
     return "\n".join(lines)
 
 
+def _sources_header(store: Store, cutoff_ts: float, threshold: float) -> str:
+    """List each polled source with its URL and how many items it contributed
+    within the window. Renders as a markdown bullet list so the daily digest
+    is self-describing.
+
+    Trailing `\\n\\n` ensures a blank line between this bullet list and
+    whatever the caller concatenates next (typically the first `###` item
+    heading) so markdown renderers don't run the bullet into the heading.
+    """
+    lines: list[str] = ["**Sources polled:**", ""]
+    for source in store.list_sources():
+        items = store.items_for_source(
+            source.id, cutoff_ts, min_relevance=threshold,
+        )
+        url = source.url or ""
+        link = f"[{source.name}]({url})" if url else source.name
+        n = len(items)
+        lines.append(f"- {link} · `{source.type}` · {n} item{'s' if n != 1 else ''} kept")
+    return "\n".join(lines) + "\n\n"
+
+
 class Bundler:
     """Writes the rotating full-corpus digest AND today's dated/top-N artifacts.
 
     The pipeline calls `export(store, out_path)` once · this writes all three
     files. The post-upload hook then S3-publishes the dated ones (paths
     re-derived from the same `_dated_paths(now)`).
+
+    Sort policy:
+      - jobs_digest.md          · NotebookLM consumer · sort by relevance DESC
+      - jobs_YYYY-MM-DD.md      · daily reader view  · sort CHRONOLOGICAL
+                                  (published_at DESC, most-recent-first), so
+                                  the page reads like a feed of "what landed
+                                  today" rather than a leaderboard
+      - jobs_topN_YYYY-MM-DD.md · "best matches"     · sort by relevance DESC
     """
 
     def __init__(self, cfg: TopicConfig) -> None:
@@ -328,44 +361,54 @@ class Bundler:
     def export(self, store: Store, out_path: str) -> int:
         threshold = self.cfg.relevance_threshold
         now = datetime.now(timezone.utc)
-
-        # 1. Full corpus → out_path (cfg.digest_path) · this is what
-        # NotebookLM rotates as the single source.
-        scored_all = store.all_items(min_relevance=threshold)
-        header = (
-            f"# Jobs Corpus — all curated listings\n"
-            f"\n"
-            f"Generated: {now.strftime('%Y-%m-%d %H:%M UTC')} · "
-            f"threshold ≥ {threshold:g} · {len(scored_all)} listings\n"
-            f"\n"
-        )
-        Path(out_path).write_text(header + _render_items_md(scored_all), encoding="utf-8")
-        print(f"  full corpus: {len(scored_all)} listings → {out_path}")
-
-        # 2 + 3. Today's windowed digest + top-N · date-stamped paths.
-        today_path, top_path = _dated_paths(now)
         window_hours = int(self.cfg.window_seconds / 3600)
         cutoff_ts = (now - timedelta(seconds=self.cfg.window_seconds)).timestamp()
-        scored_today = store.all_items(min_relevance=threshold, since_ts=cutoff_ts)
 
-        Path(today_path).write_text(
-            f"# Jobs — {now:%Y-%m-%d} (last {window_hours}h)\n\n"
+        # 1. Full corpus → out_path (cfg.digest_path) · NotebookLM source.
+        # Sort by relevance DESC so the LLM sees the highest-value items first.
+        scored_all = store.all_items(min_relevance=threshold)
+        corpus_header = (
+            f"# Jobs Corpus — all curated listings\n\n"
             f"Generated: {now:%Y-%m-%d %H:%M UTC} · threshold ≥ {threshold:g} · "
-            f"{len(scored_today)} listings\n\n"
-            + _render_items_md(scored_today),
-            encoding="utf-8",
+            f"{len(scored_all)} listings\n\n"
+            + _sources_header(store, 0.0, threshold)
         )
-        print(f"  today's digest: {len(scored_today)} → {today_path}")
+        Path(out_path).write_text(
+            corpus_header + _render_items_md(scored_all), encoding="utf-8"
+        )
+        print(f"  full corpus: {len(scored_all)} listings → {out_path}")
 
-        top_scored = scored_today[:TOP_N]
-        Path(top_path).write_text(
-            f"# Jobs — top {TOP_N} for {now:%Y-%m-%d}\n\n"
+        # 2. Today's windowed digest · CHRONOLOGICAL (most-recent-first).
+        today_path, top_path = _dated_paths(now)
+        scored_today_relevance = store.all_items(
+            min_relevance=threshold, since_ts=cutoff_ts,
+        )
+        scored_today_chrono = sorted(
+            scored_today_relevance, key=lambda t: -t[0].published_at,
+        )
+        today_header = (
+            f"# Jobs — {now:%Y-%m-%d} (last {window_hours}h, most-recent-first)\n\n"
+            f"Generated: {now:%Y-%m-%d %H:%M UTC} · threshold ≥ {threshold:g} · "
+            f"{len(scored_today_chrono)} listings\n\n"
+            + _sources_header(store, cutoff_ts, threshold)
+        )
+        Path(today_path).write_text(
+            today_header + _render_items_md(scored_today_chrono), encoding="utf-8",
+        )
+        print(f"  today's digest (chronological): {len(scored_today_chrono)} → {today_path}")
+
+        # 3. Top-N · stays RELEVANCE-RANKED (this is the "best matches" view).
+        top_scored = scored_today_relevance[:TOP_N]
+        top_header = (
+            f"# Jobs — top {TOP_N} for {now:%Y-%m-%d} (by relevance score)\n\n"
             f"Generated: {now:%Y-%m-%d %H:%M UTC} · threshold ≥ {threshold:g} · "
             f"{len(top_scored)} listings\n\n"
-            + _render_items_md(top_scored),
-            encoding="utf-8",
+            + _sources_header(store, cutoff_ts, threshold)
         )
-        print(f"  top-{TOP_N}: {len(top_scored)} → {top_path}")
+        Path(top_path).write_text(
+            top_header + _render_items_md(top_scored), encoding="utf-8",
+        )
+        print(f"  top-{TOP_N} (by relevance): {len(top_scored)} → {top_path}")
         return len(scored_all)
 
 
@@ -382,9 +425,15 @@ def _post_upload(
     prefix = cfg.effective_s3_prefix
 
     print(f"\nPublishing to s3://{bucket}/{prefix}/...")
+    # Three artifacts per day · the dated markdown (today's items,
+    # chronological), the relevance-ranked top-N markdown, and the HTML
+    # rendering of today's items (chronological, color-coded). The HTML
+    # is the bookmarkable daily-reader view; the markdowns are the
+    # NotebookLM-ingestible / scriptable view.
     for local, key in (
-        (today_path, f"{prefix}/{date_str}.md"),
-        (top_path, f"{prefix}/{date_str}-top{TOP_N}.md"),
+        (today_path,     f"{prefix}/{date_str}.md"),
+        (top_path,       f"{prefix}/{date_str}-top{TOP_N}.md"),
+        (cfg.html_path,  f"{prefix}/{date_str}.html"),
     ):
         try:
             publish_to_s3(local, bucket, key)

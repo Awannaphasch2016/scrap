@@ -231,7 +231,19 @@ class Bundler:
             "",
             f"Generated: {now.strftime('%Y-%m-%d %H:%M UTC')} · window: last {window_days} days",
             "",
+            "**Sources polled:**",
+            "",
         ]
+        # Sources header · names every source we tried + how many posts each
+        # contributed within the window. Makes the digest self-describing.
+        for source in store.list_sources():
+            posts = store.items_for_source(source.id, cutoff_ts, item_type="post")
+            url = source.url or ""
+            link = f"[{source.name}]({url})" if url else source.name
+            n = len(posts)
+            lines.append(f"- {link} · `{source.type}` · {n} post{'s' if n != 1 else ''}")
+        lines.append("")
+
         n_posts = 0
         for source in store.list_sources():
             posts = store.items_for_source(source.id, cutoff_ts, item_type="post")
@@ -389,17 +401,35 @@ class FeedPublisher:
 # --------- post-upload hook · publishes NotebookLM-derived feed to S3 ---------
 
 def _post_upload(cfg: TopicConfig, notebook_id: str | None, bucket: str | None, upload_ok: bool) -> None:
-    if not (upload_ok and notebook_id and bucket):
+    if not bucket:
         return
-    print(f"\nPublishing feed to s3://{bucket}/{FEED_TOPIC}/...")
+
+    from curator.core.s3 import publish_to_s3
+    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    # 1. The FeedPublisher derives a top-5 from NotebookLM and writes it as
+    # the dated feed file. Only meaningful when the upload landed (otherwise
+    # NotebookLM would return yesterday's items).
+    if upload_ok and notebook_id:
+        print(f"\nPublishing feed to s3://{bucket}/{FEED_TOPIC}/...")
+        try:
+            key = FeedPublisher(
+                notebook_id=notebook_id, topic=FEED_TOPIC,
+                topic_name=FEED_TOPIC_NAME, bucket=bucket,
+            ).publish_for_today()
+            print(f"  published: {key}" if key else "  publish: skipped (see logs)")
+        except Exception as e:  # noqa: BLE001
+            print(f"  publish failed: {e}")
+
+    # 2. The HTML rendering of today's posts · published as the bookmarkable
+    # daily-reader view. Independent of the NotebookLM upload outcome.
+    html_key = f"{FEED_TOPIC}/{date_str}.html"
     try:
-        key = FeedPublisher(
-            notebook_id=notebook_id, topic=FEED_TOPIC,
-            topic_name=FEED_TOPIC_NAME, bucket=bucket,
-        ).publish_for_today()
-        print(f"  published: {key}" if key else "  publish: skipped (see logs)")
+        publish_to_s3(cfg.html_path, bucket, html_key)
+        print(f"  s3://{bucket}/{html_key}")
     except Exception as e:  # noqa: BLE001
-        print(f"  publish failed: {e}")
+        print(f"  HTML publish failed: {e}")
+        logger.exception("s3 publish failed for %s", html_key)
 
 
 # --------- topic config + entry point ---------
