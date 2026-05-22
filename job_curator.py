@@ -46,6 +46,11 @@ from curator.core.render import _humanize_age
 from curator.core.s3 import publish_to_s3
 from curator.core.store import Store
 from curator.core.types import Item, Source
+from curator.fetchers.hn_hiring import HNHiringFetcher
+from curator.fetchers.reddit_jobs import RedditJobsFetcher
+from curator.fetchers.remoteok import RemoteOKFetcher
+from curator.fetchers.remotive import RemotiveFetcher
+from curator.fetchers.wwr_rss import WWRRSSFetcher
 
 logger = logging.getLogger(__name__)
 
@@ -166,274 +171,22 @@ def score_item(item: Item) -> tuple[float, list[str]]:
 
 
 # --------- http helpers ---------
-
-# _proxies moved to curator.core.fetcher (Stage 2 of curator/core extraction).
-
-
-def _get_json(url: str, timeout: int = 20) -> dict | list:
-    r = requests.get(
-        url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
-        timeout=timeout, proxies=_proxies(),
-    )
-    r.raise_for_status()
-    return r.json()
-
-
-def _get_text(url: str, timeout: int = 20) -> str:
-    r = requests.get(
-        url, headers={"User-Agent": USER_AGENT}, timeout=timeout, proxies=_proxies(),
-    )
-    r.raise_for_status()
-    return r.text
-
-
-# _strip_html moved to curator.core.fetcher.
+# _proxies · _get_json · _get_text · _strip_html all moved to
+# curator.core.fetcher (Stages 2 + 6 of curator/core extraction).
 
 # --------- fetchers ---------
-# Fetcher ABC moved to curator.core.fetcher (Stage 2 of curator/core extraction).
+# All concrete fetchers (HNHiring · RemoteOK · Remotive · WWRRSS · RedditJobs)
+# moved to curator.fetchers.* (Stage 6). The FETCHERS registry below wires
+# the jobs topic's USER_AGENT + REQUEST_DELAY into each instance.
 
-
-class HNHiringFetcher(Fetcher):
-    """Fetch the latest 'Ask HN: Who is hiring?' thread and stream comments as jobs."""
-
-    # search_by_date sorts by created_at desc · we filter by strict regex below to
-    # avoid grabbing meta threads like 'Why can't I post on Who is Hiring?'.
-    SEARCH_URL = (
-        "https://hn.algolia.com/api/v1/search_by_date"
-        "?query=Ask+HN+Who+is+hiring&tags=story&hitsPerPage=30"
-    )
-    # Canonical monthly thread by whoishiring bot: 'Ask HN: Who is hiring? (Month YYYY)'.
-    THREAD_TITLE_RE = re.compile(
-        r"^ask hn:\s*who is hiring\?\s*\([a-z]+\s+\d{4}\)\s*$", re.IGNORECASE
-    )
-    COMMENTS_URL_TMPL = (
-        "https://hn.algolia.com/api/v1/search"
-        "?tags=comment,story_{story_id}&hitsPerPage=1000&numericFilters=created_at_i>={cutoff}"
-    )
-
-    def fetch(self, source: Source, cfg: dict, cutoff_ts: float) -> Iterable[Item]:
-        data = _get_json(self.SEARCH_URL)
-        hits = data.get("hits", []) if isinstance(data, dict) else []
-        story = next(
-            (h for h in hits if self.THREAD_TITLE_RE.match(h.get("title", "").strip())),
-            None,
-        )
-        if not story:
-            logger.warning("hn_hiring: no current monthly thread found in %d hits", len(hits))
-            return
-        story_id = story["objectID"]
-        story_title = story.get("title", "Who is hiring")
-        story_ts = story.get("created_at_i", 0)
-        logger.info("hn_hiring: thread %s (%s) — %s", story_id, story_title,
-                    datetime.fromtimestamp(story_ts, timezone.utc).strftime("%Y-%m"))
-
-        url = self.COMMENTS_URL_TMPL.format(story_id=story_id, cutoff=int(cutoff_ts))
-        comments = _get_json(url)
-        for c in comments.get("hits", []) if isinstance(comments, dict) else []:
-            body_html = c.get("comment_text") or ""
-            body = _strip_html(body_html)
-            if not body:
-                continue
-            # Heuristic: skip pure "I'm looking" / "seeking work" comments — those are
-            # opposite-side posts. Real job listings tend to start with company/role.
-            head = body[:200].lower()
-            if "seeking work" in head or "looking for work" in head or "i'm seeking" in head:
-                continue
-            obj_id = c.get("objectID")
-            permalink = f"https://news.ycombinator.com/item?id={obj_id}"
-            title = body.split("\n", 1)[0][:140].strip()
-            yield Item(
-                id=f"hn:{obj_id}",
-                source_id=source.id,
-                type="job",
-                title=title or "Untitled HN listing",
-                url=permalink,
-                author=c.get("author", ""),
-                content=body,
-                published_at=float(c.get("created_at_i", 0)),
-                metadata={"thread_id": story_id, "thread_title": story_title},
-            )
-
-
-class RemoteOKFetcher(Fetcher):
-    URL = "https://remoteok.com/api"
-
-    def fetch(self, source: Source, cfg: dict, cutoff_ts: float) -> Iterable[Item]:
-        data = _get_json(self.URL)
-        if not isinstance(data, list):
-            logger.warning("remoteok: unexpected payload shape")
-            return
-        # First element is metadata; skip if it lacks "id"
-        for j in data:
-            if not isinstance(j, dict) or "id" not in j:
-                continue
-            iso = j.get("date") or ""
-            ts = _parse_iso(iso)
-            if ts < cutoff_ts:
-                continue
-            tags = j.get("tags") or []
-            descr = _strip_html(j.get("description") or "")
-            company = j.get("company") or ""
-            position = j.get("position") or j.get("title") or ""
-            url = j.get("url") or j.get("apply_url") or ""
-            yield Item(
-                id=f"remoteok:{j['id']}",
-                source_id=source.id,
-                type="job",
-                title=f"{position} @ {company}".strip(" @"),
-                url=url,
-                author=company,
-                content=descr,
-                published_at=ts,
-                metadata={
-                    "tags": tags,
-                    "salary_min": j.get("salary_min"),
-                    "salary_max": j.get("salary_max"),
-                    "location": j.get("location"),
-                },
-            )
-
-
-class RemotiveFetcher(Fetcher):
-    URL = "https://remotive.com/api/remote-jobs"
-
-    def fetch(self, source: Source, cfg: dict, cutoff_ts: float) -> Iterable[Item]:
-        data = _get_json(self.URL)
-        jobs = data.get("jobs", []) if isinstance(data, dict) else []
-        for j in jobs:
-            ts = _parse_iso(j.get("publication_date") or "")
-            if ts < cutoff_ts:
-                continue
-            descr = _strip_html(j.get("description") or "")
-            company = j.get("company_name") or ""
-            title = j.get("title") or ""
-            yield Item(
-                id=f"remotive:{j.get('id')}",
-                source_id=source.id,
-                type="job",
-                title=f"{title} @ {company}".strip(" @"),
-                url=j.get("url") or "",
-                author=company,
-                content=descr,
-                published_at=ts,
-                metadata={
-                    "tags": j.get("tags") or [],
-                    "category": j.get("category"),
-                    "job_type": j.get("job_type"),
-                    "candidate_required_location": j.get("candidate_required_location"),
-                    "salary": j.get("salary"),
-                },
-            )
-
-
-class WWRRSSFetcher(Fetcher):
-    def fetch(self, source: Source, cfg: dict, cutoff_ts: float) -> Iterable[Item]:
-        feed_url = cfg.get("feed") or cfg.get("url")
-        if not feed_url:
-            return
-        text = _get_text(feed_url)
-        root = ET.fromstring(text)
-        # RSS 2.0 path: rss/channel/item
-        channel = root.find("channel")
-        if channel is None:
-            return
-        for item in channel.findall("item"):
-            link = (item.findtext("link") or "").strip()
-            title = (item.findtext("title") or "").strip()
-            descr = _strip_html(item.findtext("description") or "")
-            pub = item.findtext("pubDate") or ""
-            ts = _parse_rfc822(pub)
-            if ts < cutoff_ts:
-                continue
-            guid = (item.findtext("guid") or link or title).strip()
-            yield Item(
-                id=f"wwr:{hash(guid) & 0xFFFFFFFF:x}",
-                source_id=source.id,
-                type="job",
-                title=title,
-                url=link,
-                author="",
-                content=descr,
-                published_at=ts,
-                metadata={"guid": guid},
-            )
-
-
-class RedditJobsFetcher(Fetcher):
-    """Reddit subreddit fetcher · filters posts by flair when require_flair is set.
-
-    Also skips seeker-side posts (titles starting with '[for hire]', '[fh]', or
-    flagged with a 'For Hire'/'Seeking work' flair) — Anak wants jobs to APPLY
-    TO, not other freelancers offering services.
-    """
-
-    _SEEKER_TITLE_RE = re.compile(
-        r"^\s*\[(?:for[\s-]*hire|fh|seeking|hire\s*me|hireme)\b", re.IGNORECASE
-    )
-    _SEEKER_FLAIR_RE = re.compile(r"\b(for[\s-]*hire|seeking\s*work|hire\s*me)\b", re.IGNORECASE)
-
-    def fetch(self, source: Source, cfg: dict, cutoff_ts: float) -> Iterable[Item]:
-        subreddit = cfg["subreddit"]
-        require_flair = cfg.get("require_flair")
-        after = None
-        while True:
-            url = f"https://www.reddit.com/r/{subreddit}/new.json?limit=100"
-            if after:
-                url += f"&after={after}"
-            try:
-                data = _get_json(url, timeout=20)
-            except requests.RequestException as e:
-                logger.warning("reddit:%s fetch failed: %s", subreddit, e)
-                return
-            if not isinstance(data, dict):
-                return
-            children = data.get("data", {}).get("children", [])
-            if not children:
-                return
-            page_ended = False
-            for c in children:
-                d = c.get("data", {})
-                ts = float(d.get("created_utc", 0))
-                if ts < cutoff_ts:
-                    page_ended = True
-                    break
-                flair = d.get("link_flair_text") or ""
-                if require_flair and require_flair.lower() not in flair.lower():
-                    continue
-                title = html.unescape(d.get("title", ""))
-                # Seeker-side posts are not jobs we'd apply to — drop them.
-                if self._SEEKER_TITLE_RE.match(title) or self._SEEKER_FLAIR_RE.search(flair):
-                    continue
-                permalink = d.get("permalink", "")
-                yield Item(
-                    id=f"reddit:{d['id']}",
-                    source_id=source.id,
-                    type="job",
-                    title=title,
-                    url=d.get("url") or f"https://www.reddit.com{permalink}",
-                    author=d.get("author", ""),
-                    content=html.unescape(d.get("selftext", "")),
-                    published_at=ts,
-                    metadata={
-                        "permalink": permalink, "score": d.get("score", 0),
-                        "num_comments": d.get("num_comments", 0),
-                        "flair": flair,
-                    },
-                )
-            if page_ended:
-                return
-            after = data.get("data", {}).get("after")
-            if not after:
-                return
-            time.sleep(REQUEST_DELAY)
 
 
 FETCHERS: dict[str, Fetcher] = {
-    "hn_hiring": HNHiringFetcher(),
-    "remoteok": RemoteOKFetcher(),
-    "remotive": RemotiveFetcher(),
-    "wwr_rss": WWRRSSFetcher(),
-    "reddit_jobs": RedditJobsFetcher(),
+    "hn_hiring":   HNHiringFetcher(user_agent=USER_AGENT),
+    "remoteok":    RemoteOKFetcher(user_agent=USER_AGENT),
+    "remotive":    RemotiveFetcher(user_agent=USER_AGENT),
+    "wwr_rss":     WWRRSSFetcher(user_agent=USER_AGENT),
+    "reddit_jobs": RedditJobsFetcher(user_agent=USER_AGENT, request_delay=REQUEST_DELAY),
 }
 
 

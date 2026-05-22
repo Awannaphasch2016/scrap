@@ -24,7 +24,11 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Iterable
 
+import requests
+
 from curator.core.types import Item, Source
+
+DEFAULT_USER_AGENT = "scrap-curator/0.1"
 
 
 class Fetcher(ABC):
@@ -34,6 +38,34 @@ class Fetcher(ABC):
     @abstractmethod
     def fetch(self, source: Source, source_cfg: dict, cutoff_ts: float) -> Iterable[Item]:
         ...
+
+
+def _get_json(
+    url: str, *, user_agent: str = DEFAULT_USER_AGENT, timeout: int = 20
+) -> dict | list:
+    """GET `url` and return parsed JSON. Raises on non-2xx."""
+    r = requests.get(
+        url,
+        headers={"User-Agent": user_agent, "Accept": "application/json"},
+        timeout=timeout,
+        proxies=_proxies(),
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def _get_text(
+    url: str, *, user_agent: str = DEFAULT_USER_AGENT, timeout: int = 20
+) -> str:
+    """GET `url` and return body as text. Raises on non-2xx."""
+    r = requests.get(
+        url,
+        headers={"User-Agent": user_agent},
+        timeout=timeout,
+        proxies=_proxies(),
+    )
+    r.raise_for_status()
+    return r.text
 
 
 def _proxies() -> dict | None:

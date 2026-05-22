@@ -19,6 +19,7 @@ from curator.core.notebooklm import NotebookLMUploader  # re-exported for caller
 from curator.core.render import _humanize_age
 from curator.core.store import Store
 from curator.core.types import Item, Source
+from curator.fetchers.reddit_posts import RedditFetcher
 
 __all__ = ["main", "NotebookLMUploader"]
 
@@ -117,110 +118,10 @@ def _migrate_legacy_reddit(conn: sqlite3.Connection) -> None:
 # Fetcher ABC moved to curator.core.fetcher (Stage 2 of curator/core extraction).
 
 
-class RedditFetcher(Fetcher):
-    def fetch(self, source: Source, source_cfg: dict, cutoff_ts: float) -> Iterable[Item]:
-        subreddit = source_cfg["subreddit"]
-        for post in self._fetch_posts(subreddit, cutoff_ts):
-            yield self._post_to_item(post, source.id)
-            for c in self._fetch_top_level_comments(post["permalink"]):
-                yield self._comment_to_item(c, source.id, post["id"])
-            time.sleep(REQUEST_DELAY)
-
-    def _fetch_posts(self, subreddit: str, cutoff_ts: float) -> list[dict]:
-        posts: list[dict] = []
-        after = None
-        headers = {"User-Agent": USER_AGENT}
-        while True:
-            url = f"https://www.reddit.com/r/{subreddit}/new.json?limit=100"
-            if after:
-                url += f"&after={after}"
-            http_proxy = os.environ.get("HTTP_PROXY")
-            proxies = (
-                {"http": http_proxy, "https": os.environ.get("HTTPS_PROXY", http_proxy)}
-                if http_proxy else None
-            )
-            r = requests.get(url, headers=headers, timeout=15, proxies=proxies)
-            r.raise_for_status()
-            data = r.json()
-            children = data["data"]["children"]
-            if not children:
-                break
-            page_ended = False
-            for c in children:
-                d = c["data"]
-                if d["created_utc"] < cutoff_ts:
-                    page_ended = True
-                    break
-                posts.append(d)
-            if page_ended:
-                break
-            after = data["data"].get("after")
-            if not after:
-                break
-            time.sleep(REQUEST_DELAY)
-        return posts
-
-    def _fetch_top_level_comments(self, permalink: str) -> list[dict]:
-        url = f"https://www.reddit.com{permalink}.json?limit=200&depth=1"
-        headers = {"User-Agent": USER_AGENT}
-        http_proxy = os.environ.get("HTTP_PROXY")
-        proxies = (
-            {"http": http_proxy, "https": os.environ.get("HTTPS_PROXY", http_proxy)}
-            if http_proxy else None
-        )
-        try:
-            r = requests.get(url, headers=headers, timeout=15, proxies=proxies)
-            r.raise_for_status()
-        except requests.RequestException as e:
-            print(f"  comment fetch failed for {permalink}: {e}")
-            return []
-        listings = r.json()
-        if len(listings) < 2:
-            return []
-        out = []
-        for c in listings[1]["data"]["children"]:
-            if c["kind"] != "t1":
-                continue
-            out.append(c["data"])
-        return out
-
-    def _post_to_item(self, p: dict, source_id: str) -> Item:
-        permalink = p.get("permalink", "")
-        return Item(
-            id=f"reddit:{p['id']}",
-            source_id=source_id,
-            type="post",
-            title=html.unescape(p.get("title", "")),
-            url=p.get("url") or f"https://www.reddit.com{permalink}",
-            author=p.get("author", ""),
-            content=html.unescape(p.get("selftext", "")),
-            published_at=p.get("created_utc", 0),
-            metadata={
-                "permalink": permalink,
-                "score": p.get("score", 0),
-                "num_comments": p.get("num_comments", 0),
-            },
-        )
-
-    def _comment_to_item(self, c: dict, source_id: str, parent_post_id: str) -> Item:
-        return Item(
-            id=f"reddit:{c['id']}",
-            source_id=source_id,
-            type="comment",
-            title="",
-            url="",
-            author=c.get("author", ""),
-            content=html.unescape(c.get("body", "")),
-            published_at=c.get("created_utc", 0),
-            metadata={
-                "score": c.get("score", 0),
-                "parent_post_id": f"reddit:{parent_post_id}",
-            },
-        )
-
+# RedditFetcher moved to curator.fetchers.reddit_posts (Stage 6).
 
 FETCHERS: dict[str, Fetcher] = {
-    "reddit": RedditFetcher(),
+    "reddit": RedditFetcher(user_agent=USER_AGENT, request_delay=REQUEST_DELAY),
 }
 
 
