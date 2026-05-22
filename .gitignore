@@ -9,4 +9,8 @@ __pycache__/
 *.db
 news.html
 digest.md
+jobs.html
+jobs_digest.md
+jobs_*.md
+jobs_top*_*.md
 tools/plantuml.jar
