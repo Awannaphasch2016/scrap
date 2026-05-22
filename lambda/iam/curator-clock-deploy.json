@@ -1,0 +1,63 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ClockSNSTopicManagement",
+      "Effect": "Allow",
+      "Action": [
+        "sns:CreateTopic",
+        "sns:GetTopicAttributes",
+        "sns:SetTopicAttributes",
+        "sns:ListSubscriptionsByTopic",
+        "sns:Subscribe",
+        "sns:Unsubscribe",
+        "sns:Publish"
+      ],
+      "Resource": "arn:aws:sns:*:*:curator-daily-tick"
+    },
+    {
+      "Sid": "ClockSchedulerRoleManagement",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:GetRole",
+        "iam:PutRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:PassRole"
+      ],
+      "Resource": "arn:aws:iam::*:role/curator-clock-scheduler-role"
+    },
+    {
+      "Sid": "ClockSchedulerManagement",
+      "Effect": "Allow",
+      "Action": [
+        "scheduler:CreateSchedule",
+        "scheduler:UpdateSchedule",
+        "scheduler:GetSchedule",
+        "scheduler:DeleteSchedule",
+        "scheduler:ListSchedules"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "LambdaPermissionForSNSInvoke",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:AddPermission",
+        "lambda:GetPolicy"
+      ],
+      "Resource": "arn:aws:lambda:*:*:function:scrape-*-curator"
+    },
+    {
+      "Sid": "OldScheduleDecommission",
+      "Effect": "Allow",
+      "Action": [
+        "events:DeleteRule",
+        "events:RemoveTargets",
+        "events:DescribeRule",
+        "events:ListTargetsByRule"
+      ],
+      "Resource": "arn:aws:events:*:*:rule/scrape-*-curator-daily"
+    }
+  ]
+}

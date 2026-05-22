@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the scrape-job-curator Lambda with an EventBridge Scheduler daily cron.
+# Deploy the scrape-job-curator Lambda.
 #
 # Run with Doppler so AWS_* env vars + DOPPLER_TOKEN are injected:
 #   doppler run --project scrape --config dev -- ./lambda/deploy-jobs.sh
@@ -8,13 +8,14 @@
 # JOBS_* secrets (JOBS_NOTEBOOK_ID, JOBS_FEED_BUCKET) plus the shared ones
 # (TS_AUTHKEY, LAPTOP_TAILNET_IP, NOTEBOOKLM_STORAGE_STATE, DOPPLER_WRITE_TOKEN).
 #
-# Uses **EventBridge Scheduler** (aws.scheduler.*), not the legacy EventBridge
-# Rule schedule — per the `aws-eventbridge-scheduler-lambda` pattern. The
-# scheduler trust policy includes aws:SourceAccount to prevent the confused-
-# deputy vector.
+# Trigger model · this Lambda fires from the shared `curator-daily-tick`
+# SNS topic, fanned out from a single EventBridge Scheduler (see
+# lambda/setup-clock.sh). Adding the Nth topic is "new Lambda + new
+# subscription" — no per-topic schedule, no per-topic scheduler IAM role.
 #
 # Shares the ECR image with scrape-news-curator (same Dockerfile copies both
-# handlers). The CMD override at the function level selects which handler runs.
+# handlers). The CMD override at the function level + CURATOR_TOPIC env
+# select which handler runs.
 
 set -euo pipefail
 
@@ -24,12 +25,10 @@ set -euo pipefail
 FUNCTION_NAME="scrape-job-curator"
 ECR_REPOSITORY_NAME="scrape-news-curator"   # shared image, different function
 IAM_ROLE_NAME="scrape-job-curator-lambda-role"
-SCHEDULER_ROLE_NAME="scrape-job-curator-scheduler-role"
-SCHEDULE_NAME="scrape-job-curator-daily"
-# 09:00 ICT (Asia/Bangkok, UTC+7) = 02:00 UTC · daily
-# Early enough that the 36h window catches the previous business day cleanly.
-SCHEDULE_EXPRESSION="cron(0 2 * * ? *)"
-SCHEDULE_TIMEZONE="UTC"
+# Trigger comes from the shared curator-daily-tick SNS topic (see
+# lambda/setup-clock.sh). This deploy script no longer creates a per-topic
+# schedule + scheduler IAM role · subscribe-to-clock.sh wires this Lambda
+# into the fan-out point. Adding the Nth topic requires no changes here.
 LAMBDA_TIMEOUT_S=600
 LAMBDA_MEMORY_MB=1024
 PLATFORM="linux/amd64"
@@ -158,86 +157,18 @@ else
 fi
 LAMBDA_ARN="arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${FUNCTION_NAME}"
 
-echo "==> Ensuring EventBridge Scheduler IAM role"
-if ! aws iam get-role --role-name "$SCHEDULER_ROLE_NAME" >/dev/null 2>&1; then
-    # SourceAccount condition closes the cross-account confused-deputy vector.
-    TMP_TRUST=$(mktemp)
-    cat > "$TMP_TRUST" <<JSON
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Principal": {"Service": "scheduler.amazonaws.com"},
-    "Action": "sts:AssumeRole",
-    "Condition": {"StringEquals": {"aws:SourceAccount": "${AWS_ACCOUNT_ID}"}}
-  }]
-}
-JSON
-    aws iam create-role --role-name "$SCHEDULER_ROLE_NAME" \
-        --assume-role-policy-document "file://$TMP_TRUST" >/dev/null
-    rm -f "$TMP_TRUST"
-    echo "    created ${SCHEDULER_ROLE_NAME}"
-    sleep 10
-else
-    echo "    exists"
-fi
-SCHEDULER_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/${SCHEDULER_ROLE_NAME}"
-
-echo "==> Setting scheduler role inline policy (lambda:InvokeFunction on target)"
-TMP_INVOKE_POLICY=$(mktemp)
-cat > "$TMP_INVOKE_POLICY" <<JSON
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Action": "lambda:InvokeFunction",
-    "Resource": ["${LAMBDA_ARN}", "${LAMBDA_ARN}:*"]
-  }]
-}
-JSON
-aws iam put-role-policy --role-name "$SCHEDULER_ROLE_NAME" \
-    --policy-name "invoke-${FUNCTION_NAME}" \
-    --policy-document "file://$TMP_INVOKE_POLICY" >/dev/null
-rm -f "$TMP_INVOKE_POLICY"
-
-echo "==> Creating/updating EventBridge Schedule"
-SCHED_TARGET="{\"Arn\":\"${LAMBDA_ARN}\",\"RoleArn\":\"${SCHEDULER_ROLE_ARN}\",\"RetryPolicy\":{\"MaximumEventAgeInSeconds\":3600,\"MaximumRetryAttempts\":2}}"
-if aws scheduler get-schedule --name "$SCHEDULE_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
-    aws scheduler update-schedule \
-        --name "$SCHEDULE_NAME" \
-        --schedule-expression "$SCHEDULE_EXPRESSION" \
-        --schedule-expression-timezone "$SCHEDULE_TIMEZONE" \
-        --flexible-time-window '{"Mode":"OFF"}' \
-        --target "$SCHED_TARGET" \
-        --state ENABLED \
-        --region "$AWS_REGION" >/dev/null
-    echo "    updated"
-else
-    aws scheduler create-schedule \
-        --name "$SCHEDULE_NAME" \
-        --schedule-expression "$SCHEDULE_EXPRESSION" \
-        --schedule-expression-timezone "$SCHEDULE_TIMEZONE" \
-        --flexible-time-window '{"Mode":"OFF"}' \
-        --target "$SCHED_TARGET" \
-        --state ENABLED \
-        --region "$AWS_REGION" >/dev/null
-    echo "    created"
-fi
+echo "==> Subscribing to curator-daily-tick clock"
+./lambda/subscribe-to-clock.sh "$FUNCTION_NAME"
 
 echo
 echo "==> Done"
 echo "    function:   ${LAMBDA_ARN}"
-echo "    schedule:   ${SCHEDULE_EXPRESSION} ${SCHEDULE_TIMEZONE}"
-echo "                (= 09:00 ICT, Asia/Bangkok, daily)"
+echo "    trigger:    SNS curator-daily-tick (provisioned by lambda/setup-clock.sh)"
 echo
-echo "Smoke-test the chain (one-shot at()-fire, per the verification pattern):"
-echo "    FIRE_AT=\$(date -u -d '+3 minutes' '+%Y-%m-%dT%H:%M:00')"
-echo "    aws scheduler create-schedule --name ${SCHEDULE_NAME}-oneshot \\"
-echo "      --schedule-expression \"at(\${FIRE_AT})\" --schedule-expression-timezone UTC \\"
-echo "      --flexible-time-window '{\"Mode\":\"OFF\"}' \\"
-echo "      --target '$SCHED_TARGET' --action-after-completion NONE --region ${AWS_REGION}"
+echo "Smoke-test the fan-out (publishes to the shared clock · both topic Lambdas fire):"
+echo "    aws sns publish --topic-arn arn:aws:sns:${AWS_REGION}:${AWS_ACCOUNT_ID}:curator-daily-tick \\"
+echo "      --message 'manual-smoke' --region ${AWS_REGION}"
 echo "    aws logs tail /aws/lambda/${FUNCTION_NAME} --region ${AWS_REGION} --follow"
-echo "    # Cleanup:  aws scheduler delete-schedule --name ${SCHEDULE_NAME}-oneshot --region ${AWS_REGION}"
 echo
 echo "Invoke manually (bypasses the scheduler chain — only proves the Lambda runs):"
 echo "    aws lambda invoke --function-name ${FUNCTION_NAME} --region ${AWS_REGION} /tmp/job-out.json && cat /tmp/job-out.json"

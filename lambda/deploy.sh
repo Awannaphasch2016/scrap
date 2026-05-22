@@ -17,8 +17,9 @@ set -euo pipefail
 FUNCTION_NAME="scrape-news-curator"
 ECR_REPOSITORY_NAME="scrape-news-curator"
 IAM_ROLE_NAME="scrape-news-curator-lambda-role"
-SCHEDULE_RULE_NAME="scrape-news-curator-daily"
-SCHEDULE_EXPRESSION="cron(0 6 * * ? *)"   # 06:00 UTC daily
+# Trigger comes from the shared curator-daily-tick SNS topic (see
+# lambda/setup-clock.sh). This deploy script no longer creates a per-topic
+# schedule · subscribe-to-clock.sh wires this Lambda to the fan-out point.
 LAMBDA_TIMEOUT_S=600
 LAMBDA_MEMORY_MB=1024
 PLATFORM="linux/amd64"
@@ -116,30 +117,15 @@ else
     echo "    created"
 fi
 
-echo "==> Creating EventBridge schedule"
-aws events put-rule --name "$SCHEDULE_RULE_NAME" \
-    --schedule-expression "$SCHEDULE_EXPRESSION" \
-    --state ENABLED \
-    --region "$AWS_REGION" >/dev/null
-
 LAMBDA_ARN="arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${FUNCTION_NAME}"
-RULE_ARN="arn:aws:events:${AWS_REGION}:${AWS_ACCOUNT_ID}:rule/${SCHEDULE_RULE_NAME}"
 
-aws events put-targets --rule "$SCHEDULE_RULE_NAME" \
-    --targets "Id=1,Arn=$LAMBDA_ARN" \
-    --region "$AWS_REGION" >/dev/null
-
-aws lambda add-permission --function-name "$FUNCTION_NAME" \
-    --statement-id "${SCHEDULE_RULE_NAME}-invoke" \
-    --action lambda:InvokeFunction \
-    --principal events.amazonaws.com \
-    --source-arn "$RULE_ARN" \
-    --region "$AWS_REGION" >/dev/null 2>&1 || true
+echo "==> Subscribing to curator-daily-tick clock"
+./lambda/subscribe-to-clock.sh "$FUNCTION_NAME"
 
 echo
 echo "==> Done"
 echo "    function:  ${LAMBDA_ARN}"
-echo "    schedule:  ${SCHEDULE_EXPRESSION}  (rule: ${SCHEDULE_RULE_NAME})"
+echo "    trigger:   SNS curator-daily-tick (provisioned by lambda/setup-clock.sh)"
 echo
 echo "Invoke manually:"
 echo "    aws lambda invoke --function-name ${FUNCTION_NAME} --region ${AWS_REGION} /tmp/lambda-out.json && cat /tmp/lambda-out.json"
