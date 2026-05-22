@@ -41,6 +41,7 @@ from typing import Iterable
 import requests
 
 from curator.core.fetcher import Fetcher, _parse_iso, _parse_rfc822, _proxies, _strip_html
+from curator.core.store import Store
 from curator.core.types import Item, Source
 
 logger = logging.getLogger(__name__)
@@ -119,118 +120,8 @@ SOURCES: list[dict] = [
 # Source + Item moved to curator.core.types (Stage 1 of curator/core extraction).
 
 # --------- store ---------
-
-class Store:
-    def __init__(self, path: str = DB_PATH):
-        self.conn = sqlite3.connect(path)
-        self.conn.row_factory = sqlite3.Row
-        self._setup()
-
-    def _setup(self) -> None:
-        self.conn.executescript("""
-            CREATE TABLE IF NOT EXISTS sources (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                type TEXT NOT NULL,
-                url TEXT
-            );
-            CREATE TABLE IF NOT EXISTS items (
-                id TEXT PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                type TEXT NOT NULL,
-                title TEXT,
-                url TEXT,
-                author TEXT,
-                content TEXT,
-                published_at REAL,
-                fetched_at REAL DEFAULT (unixepoch()),
-                relevance REAL DEFAULT 0,
-                metadata TEXT,
-                FOREIGN KEY (source_id) REFERENCES sources(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_items_source_published
-                ON items(source_id, published_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_items_relevance
-                ON items(relevance DESC, published_at DESC);
-        """)
-        self.conn.commit()
-
-    def upsert_source(self, s: Source) -> None:
-        self.conn.execute(
-            "INSERT OR REPLACE INTO sources (id, name, type, url) VALUES (?, ?, ?, ?)",
-            (s.id, s.name, s.type, s.url),
-        )
-        self.conn.commit()
-
-    def upsert_item(self, i: Item, relevance: float) -> None:
-        self.conn.execute(
-            """INSERT OR REPLACE INTO items
-               (id, source_id, type, title, url, author, content,
-                published_at, relevance, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                i.id, i.source_id, i.type, i.title, i.url, i.author, i.content,
-                i.published_at, relevance,
-                json.dumps(i.metadata, ensure_ascii=False),
-            ),
-        )
-
-    def commit(self) -> None:
-        self.conn.commit()
-
-    def list_sources(self) -> list[Source]:
-        rows = self.conn.execute(
-            "SELECT id, name, type, url FROM sources ORDER BY name"
-        ).fetchall()
-        return [Source(id=r["id"], name=r["name"], type=r["type"], url=r["url"] or "")
-                for r in rows]
-
-    def items_for_source(
-        self, source_id: str, since_ts: float, min_relevance: float = 0.0
-    ) -> list[tuple[Item, float]]:
-        rows = self.conn.execute(
-            """SELECT id, source_id, type, title, url, author, content,
-                      published_at, relevance, metadata
-               FROM items
-               WHERE source_id = ? AND published_at >= ? AND relevance >= ?
-               ORDER BY relevance DESC, published_at DESC""",
-            (source_id, since_ts, min_relevance),
-        ).fetchall()
-        return [self._row_to_pair(r) for r in rows]
-
-    def all_items(
-        self, min_relevance: float = 0.0, since_ts: float | None = None,
-    ) -> list[tuple[Item, float, str]]:
-        """Return (item, score, source_name) across all sources, sorted by score, recency."""
-        params: list = [min_relevance]
-        where = "i.relevance >= ?"
-        if since_ts is not None:
-            where += " AND i.published_at >= ?"
-            params.append(since_ts)
-        rows = self.conn.execute(
-            f"""SELECT i.id, i.source_id, i.type, i.title, i.url, i.author, i.content,
-                       i.published_at, i.relevance, i.metadata, s.name AS source_name
-                FROM items i JOIN sources s ON s.id = i.source_id
-                WHERE {where}
-                ORDER BY i.relevance DESC, i.published_at DESC""",
-            params,
-        ).fetchall()
-        out: list[tuple[Item, float, str]] = []
-        for r in rows:
-            item, score = self._row_to_pair(r)
-            out.append((item, score, r["source_name"]))
-        return out
-
-    @staticmethod
-    def _row_to_pair(r: sqlite3.Row) -> tuple[Item, float]:
-        item = Item(
-            id=r["id"], source_id=r["source_id"], type=r["type"],
-            title=r["title"] or "", url=r["url"] or "",
-            author=r["author"] or "", content=r["content"] or "",
-            published_at=r["published_at"] or 0,
-            metadata=json.loads(r["metadata"]) if r["metadata"] else {},
-        )
-        return item, (r["relevance"] or 0.0)
+# Store moved to curator.core.store (Stage 3 of curator/core extraction).
+# Jobs needs no legacy migration — jobs.db only ever had the unified schema.
 
 
 # --------- relevance ---------
@@ -772,7 +663,7 @@ def _source_from_cfg(cfg: dict) -> Source:
 
 def main() -> None:
     print(f"Curating jobs (last {WINDOW_HOURS}h, threshold ≥ {RELEVANCE_THRESHOLD:g})...")
-    store = Store()
+    store = Store(DB_PATH)
     now = datetime.now(timezone.utc)
     cutoff_ts = (now - timedelta(hours=WINDOW_HOURS)).timestamp()
 

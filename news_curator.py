@@ -15,6 +15,7 @@ from typing import Iterable
 import requests
 
 from curator.core.fetcher import Fetcher
+from curator.core.store import Store
 from curator.core.types import Item, Source
 
 logger = logging.getLogger(__name__)
@@ -43,152 +44,68 @@ SOURCES = [
 # Source + Item moved to curator.core.types (Stage 1 of curator/core extraction).
 
 # --------- store ---------
+# Store moved to curator.core.store (Stage 3 of curator/core extraction).
+# News still owns the one-time posts/comments→items migration · passed below
+# as the `legacy_migration` callback when constructing the Store.
 
-class Store:
-    def __init__(self, path: str = DB_PATH):
-        self.conn = sqlite3.connect(path)
-        self.conn.row_factory = sqlite3.Row
-        self._setup()
-        self._migrate_legacy()
+def _migrate_legacy_reddit(conn: sqlite3.Connection) -> None:
+    """One-time migration · old posts/comments tables → unified items table.
 
-    def _setup(self) -> None:
-        # add 'type' column to legacy sources table if missing
-        cur = self.conn.cursor()
-        if cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sources'").fetchone():
-            cols = {r[1] for r in cur.execute("PRAGMA table_info(sources)").fetchall()}
-            if "type" not in cols:
-                cur.execute("ALTER TABLE sources ADD COLUMN type TEXT NOT NULL DEFAULT 'reddit'")
-                self.conn.commit()
-
-        self.conn.executescript("""
-            CREATE TABLE IF NOT EXISTS sources (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                type TEXT NOT NULL,
-                url TEXT
-            );
-            CREATE TABLE IF NOT EXISTS items (
-                id TEXT PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                type TEXT NOT NULL,
-                title TEXT,
-                url TEXT,
-                author TEXT,
-                content TEXT,
-                published_at REAL,
-                fetched_at REAL DEFAULT (unixepoch()),
-                metadata TEXT,
-                FOREIGN KEY (source_id) REFERENCES sources(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_items_source_published
-                ON items(source_id, published_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_items_type ON items(type);
-        """)
-        self.conn.commit()
-
-    def _migrate_legacy(self) -> None:
-        cur = self.conn.cursor()
-        existing = {
-            r[0]
-            for r in cur.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
-        if "posts" not in existing and "comments" not in existing:
-            return
-
-        n_items = cur.execute("SELECT COUNT(*) FROM items").fetchone()[0]
-        n_posts = (
-            cur.execute("SELECT COUNT(*) FROM posts").fetchone()[0]
-            if "posts" in existing
-            else 0
-        )
-        if n_items >= n_posts and n_posts > 0:
-            # already migrated; drop legacy tables
-            cur.executescript("DROP TABLE IF EXISTS comments; DROP TABLE IF EXISTS posts;")
-            self.conn.commit()
-            return
-
-        print(f"Migrating legacy schema → items ({n_posts} posts)...")
-        cur.executescript("""
-            INSERT OR REPLACE INTO items
-                (id, source_id, type, title, url, author, content, published_at, metadata)
-            SELECT
-                id, source_id, 'post',
-                title,
-                COALESCE(NULLIF(url, ''), 'https://www.reddit.com' || permalink),
-                author,
-                COALESCE(selftext, ''),
-                created_utc,
-                json_object('permalink', permalink, 'score', score, 'num_comments', num_comments)
-            FROM posts;
-
-            INSERT OR REPLACE INTO items
-                (id, source_id, type, title, url, author, content, published_at, metadata)
-            SELECT
-                c.id, p.source_id, 'comment',
-                '', '', c.author, c.body, c.created_utc,
-                json_object('score', c.score, 'parent_post_id', c.post_id)
-            FROM comments c JOIN posts p ON c.post_id = p.id;
-
-            DROP TABLE comments;
-            DROP TABLE posts;
-        """)
-        self.conn.commit()
-        migrated = cur.execute("SELECT COUNT(*) FROM items").fetchone()[0]
-        print(f"  migrated to {migrated} items")
-
-    def upsert_source(self, s: Source) -> None:
-        self.conn.execute(
-            "INSERT OR REPLACE INTO sources (id, name, type, url) VALUES (?, ?, ?, ?)",
-            (s.id, s.name, s.type, s.url),
-        )
-        self.conn.commit()
-
-    def upsert_item(self, i: Item) -> None:
-        self.conn.execute(
-            """INSERT OR REPLACE INTO items
-               (id, source_id, type, title, url, author, content, published_at, metadata)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                i.id, i.source_id, i.type,
-                i.title, i.url, i.author, i.content,
-                i.published_at, json.dumps(i.metadata, ensure_ascii=False),
-            ),
-        )
-
-    def commit(self) -> None:
-        self.conn.commit()
-
-    def list_sources(self) -> list[Source]:
-        rows = self.conn.execute(
-            "SELECT id, name, type, url FROM sources ORDER BY name"
+    News-topic-specific · jobs never had the legacy schema. No-op if the
+    legacy tables don't exist. Idempotent · drops the legacy tables after
+    a successful copy so subsequent runs short-circuit at the existence
+    check.
+    """
+    cur = conn.cursor()
+    existing = {
+        r[0]
+        for r in cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
         ).fetchall()
-        return [Source(id=r["id"], name=r["name"], type=r["type"], url=r["url"] or "") for r in rows]
+    }
+    if "posts" not in existing and "comments" not in existing:
+        return
 
-    def items_for_source(
-        self, source_id: str, since_ts: float, item_type: str | None = None
-    ) -> list[Item]:
-        query = (
-            "SELECT id, source_id, type, title, url, author, content, published_at, metadata "
-            "FROM items WHERE source_id = ? AND published_at >= ?"
-        )
-        params: list = [source_id, since_ts]
-        if item_type:
-            query += " AND type = ?"
-            params.append(item_type)
-        query += " ORDER BY published_at DESC"
-        rows = self.conn.execute(query, params).fetchall()
-        return [
-            Item(
-                id=r["id"], source_id=r["source_id"], type=r["type"],
-                title=r["title"] or "", url=r["url"] or "",
-                author=r["author"] or "", content=r["content"] or "",
-                published_at=r["published_at"] or 0,
-                metadata=json.loads(r["metadata"]) if r["metadata"] else {},
-            )
-            for r in rows
-        ]
+    n_items = cur.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+    n_posts = (
+        cur.execute("SELECT COUNT(*) FROM posts").fetchone()[0]
+        if "posts" in existing
+        else 0
+    )
+    if n_items >= n_posts and n_posts > 0:
+        # already migrated; drop legacy tables
+        cur.executescript("DROP TABLE IF EXISTS comments; DROP TABLE IF EXISTS posts;")
+        conn.commit()
+        return
+
+    print(f"Migrating legacy schema → items ({n_posts} posts)...")
+    cur.executescript("""
+        INSERT OR REPLACE INTO items
+            (id, source_id, type, title, url, author, content, published_at, metadata)
+        SELECT
+            id, source_id, 'post',
+            title,
+            COALESCE(NULLIF(url, ''), 'https://www.reddit.com' || permalink),
+            author,
+            COALESCE(selftext, ''),
+            created_utc,
+            json_object('permalink', permalink, 'score', score, 'num_comments', num_comments)
+        FROM posts;
+
+        INSERT OR REPLACE INTO items
+            (id, source_id, type, title, url, author, content, published_at, metadata)
+        SELECT
+            c.id, p.source_id, 'comment',
+            '', '', c.author, c.body, c.created_utc,
+            json_object('score', c.score, 'parent_post_id', c.post_id)
+        FROM comments c JOIN posts p ON c.post_id = p.id;
+
+        DROP TABLE comments;
+        DROP TABLE posts;
+    """)
+    conn.commit()
+    migrated = cur.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+    print(f"  migrated to {migrated} items")
 
 
 # --------- fetchers ---------
@@ -367,7 +284,7 @@ class Renderer:
         for source in store.list_sources():
             posts = store.items_for_source(source.id, cutoff_ts, item_type="post")
             items_html: list[str] = []
-            for p in posts:
+            for p, _ in posts:
                 age = _humanize_age(p.published_at, now.timestamp())
                 permalink = p.metadata.get("permalink", "")
                 discussion = ""
@@ -429,7 +346,7 @@ class Bundler:
                 continue
             lines.append(f"## {source.name}")
             lines.append("")
-            for p in posts:
+            for p, _ in posts:
                 n_posts += 1
                 pub = datetime.fromtimestamp(p.published_at, timezone.utc).strftime("%Y-%m-%d")
                 permalink = p.metadata.get("permalink", "")
@@ -796,7 +713,7 @@ def _source_from_cfg(cfg: dict) -> Source:
 
 def main() -> None:
     print(f"Curating scraping news (last {WINDOW_DAYS} days)...")
-    store = Store()
+    store = Store(DB_PATH, legacy_migration=_migrate_legacy_reddit)
 
     cutoff_ts = (datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS)).timestamp()
 
