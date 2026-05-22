@@ -14,6 +14,8 @@ from typing import Iterable
 
 import requests
 
+from curator.core.types import Item, Source
+
 logger = logging.getLogger(__name__)
 
 # --------- config ---------
@@ -37,27 +39,7 @@ SOURCES = [
 
 
 # --------- data model ---------
-
-@dataclasses.dataclass
-class Source:
-    id: str
-    name: str
-    type: str
-    url: str = ""
-
-
-@dataclasses.dataclass
-class Item:
-    id: str
-    source_id: str
-    type: str  # "post" | "comment" | "article"
-    title: str
-    url: str
-    author: str
-    content: str
-    published_at: float
-    metadata: dict = dataclasses.field(default_factory=dict)
-
+# Source + Item moved to curator.core.types (Stage 1 of curator/core extraction).
 
 # --------- store ---------
 
