@@ -16,6 +16,7 @@ import requests
 
 from curator.core.fetcher import Fetcher
 from curator.core.notebooklm import NotebookLMUploader  # re-exported for callers
+from curator.core.render import _humanize_age
 from curator.core.store import Store
 from curator.core.types import Item, Source
 
@@ -225,13 +226,7 @@ FETCHERS: dict[str, Fetcher] = {
 
 # --------- renderer ---------
 
-def _humanize_age(ts: float, now_ts: float) -> str:
-    delta = now_ts - ts
-    if delta < 3600:
-        return f"{int(delta / 60)}m ago"
-    if delta < 86400:
-        return f"{int(delta / 3600)}h ago"
-    return f"{int(delta / 86400)}d ago"
+# _humanize_age moved to curator.core.render (Stage 5 of curator/core extraction).
 
 
 HTML_TEMPLATE = """<!doctype html>
