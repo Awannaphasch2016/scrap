@@ -1,0 +1,82 @@
+@startuml C4_Component_Topics
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Component.puml
+
+title C4 Level 3 — Curator components inside each Lambda\nParallel structure: same Source/Item/Store/Fetcher pattern. Jobs adds relevance scoring + per-day publishing + multi-source fetchers; news has none of those.
+
+AddElementTag("topic_jobs",  $bgColor="#1c2026", $fontColor="#e8eaed", $borderColor="#fbbf24", $legendText="jobs-only component")
+AddElementTag("topic_news",  $bgColor="#1c2026", $fontColor="#e8eaed", $borderColor="#5eead4", $legendText="scraping-only component")
+AddElementTag("shared",      $bgColor="#1c2026", $fontColor="#e8eaed", $borderColor="#9aa3ad", $legendText="Shared shape (same name, same role, distinct copy in each module)")
+AddElementTag("external",    $bgColor="#0b0d10", $fontColor="#e8eaed", $borderColor="#9aa3ad", $legendText="External")
+
+Container_Boundary(jobs_b, "job_curator.py (jobs Lambda)") {
+    Component(j_main,    "main()",          "function",            "Pipeline · iterate SOURCES, fetch+score+upsert, render, bundle, upload, publish.", $tags="topic_jobs")
+    Component(j_store,   "Store",           "class · jobs.db",     "SQLite wrapper · items has a `relevance` column. all_items() returns globally sorted (item, score, source_name).", $tags="topic_jobs")
+    Component(j_scorer,  "score_item()",    "function",            "Keyword-weighted relevance score (SKILL_WEIGHTS table) + NEGATIVE_KEYWORDS penalty. Title hits 2× · tags 1×.", $tags="topic_jobs")
+    Component(j_fetch_base, "Fetcher (ABC)","abstract class",      "fetch(source, cfg, cutoff_ts) → Iterable[Item].", $tags="shared")
+    Component(j_fetch_hn,    "HNHiringFetcher",     "concrete",    "Algolia search_by_date + monthly-thread regex + comments.", $tags="topic_jobs")
+    Component(j_fetch_ok,    "RemoteOKFetcher",     "concrete",    "remoteok.com/api · skip metadata head.", $tags="topic_jobs")
+    Component(j_fetch_remotive, "RemotiveFetcher",  "concrete",    "remotive.com/api/remote-jobs.", $tags="topic_jobs")
+    Component(j_fetch_wwr,   "WWRRSSFetcher",       "concrete",    "RSS via stdlib ElementTree.", $tags="topic_jobs")
+    Component(j_fetch_reddit,"RedditJobsFetcher",   "concrete",    "Multi-sub · flair filter · [for hire] seeker filter.", $tags="topic_jobs")
+    Component(j_render,  "Renderer",        "class",               "jobs.html · sorted by relevance per source.", $tags="topic_jobs")
+    Component(j_bundle,  "Bundler",         "class",               "export_full_corpus → jobs_digest.md · export_dated → jobs_YYYY-MM-DD.md · jobs_topN_YYYY-MM-DD.md.", $tags="topic_jobs")
+    Component(j_pub_nb,  "_upload_to_notebooklm", "thin wrapper",  "Imports NotebookLMUploader from news_curator and points it at JOBS_NOTEBOOK_ID.", $tags="topic_jobs")
+    Component(j_pub_s3,  "_publish_to_s3",  "function",            "boto3 put_object · jobs/ prefix.", $tags="topic_jobs")
+}
+
+Container_Boundary(news_b, "news_curator.py (news Lambda)") {
+    Component(n_main,    "main()",          "function",            "Pipeline · iterate SOURCES (one entry · r/WebScraping), fetch, upsert, render, bundle, upload, publish feed.", $tags="topic_news")
+    Component(n_store,   "Store",           "class · news.db",     "SQLite wrapper · items has NO relevance column. Legacy posts/comments migration.", $tags="topic_news")
+    Component(n_fetch_base, "Fetcher (ABC)","abstract class",      "Same shape as jobs · fetch(source, cfg, cutoff_ts) → Iterable[Item].", $tags="shared")
+    Component(n_fetch_reddit,"RedditFetcher","concrete",           "r/WebScraping · posts + top-level comments. No flair filter.", $tags="topic_news")
+    Component(n_render,  "Renderer",        "class",               "news.html · grouped by source, no scoring.", $tags="topic_news")
+    Component(n_bundle,  "Bundler",         "class",               "export → digest.md · single file, no per-day variants.", $tags="topic_news")
+    Component(n_pub_nb,  "NotebookLMUploader", "class",            "Rotating-source upload · Doppler push-back of rotated cookies. Imported by both topics — canonical lives here.", $tags="shared")
+    Component(n_pub_feed,"FeedPublisher",   "class",               "After upload · queries NotebookLM via feed_prompt.FEED_PROMPT · writes scraping/YYYY-MM-DD.md to S3.", $tags="topic_news")
+}
+
+ContainerDb_Ext(jobs_db,  "jobs.db",  "SQLite", $tags="topic_jobs")
+ContainerDb_Ext(news_db,  "news.db",  "SQLite", $tags="topic_news")
+System_Ext(nbl,           "NotebookLM",    "External", $tags="external")
+System_Ext(s3,            "S3 FEED_BUCKET","External", $tags="external")
+System_Ext(sources_jobs,  "5 source families (HN · RemoteOK · Remotive · WWR · Reddit)", "External", $tags="external")
+System_Ext(sources_news,  "1 source family (Reddit)", "External", $tags="external")
+
+Rel(j_main, j_fetch_base, "Iterates SOURCES")
+Rel(j_fetch_base, j_fetch_hn,       "subclass")
+Rel(j_fetch_base, j_fetch_ok,       "subclass")
+Rel(j_fetch_base, j_fetch_remotive, "subclass")
+Rel(j_fetch_base, j_fetch_wwr,      "subclass")
+Rel(j_fetch_base, j_fetch_reddit,   "subclass")
+Rel(j_fetch_hn, sources_jobs,       "HTTPS")
+Rel(j_fetch_ok, sources_jobs,       "HTTPS")
+Rel(j_fetch_remotive, sources_jobs, "HTTPS")
+Rel(j_fetch_wwr, sources_jobs,      "HTTPS")
+Rel(j_fetch_reddit, sources_jobs,   "HTTPS")
+Rel(j_main, j_scorer, "score_item(item) per yielded Item")
+Rel(j_main, j_store,  "upsert_item(item, score)")
+Rel(j_main, j_render, "render(store)")
+Rel(j_main, j_bundle, "export_full_corpus + export_dated (×2)")
+Rel(j_main, j_pub_nb, "if JOBS_NOTEBOOK_ID")
+Rel(j_main, j_pub_s3, "if JOBS_FEED_BUCKET")
+Rel(j_pub_nb, n_pub_nb, "imports + reuses (verbatim, no fork)")
+Rel(j_pub_nb, nbl, "upload corpus", "via NotebookLMUploader")
+Rel(j_pub_s3, s3,  "put_object")
+Rel(j_store, jobs_db, "writes / reads")
+
+Rel(n_main, n_fetch_base, "Iterates SOURCES (single entry)")
+Rel(n_fetch_base, n_fetch_reddit, "subclass")
+Rel(n_fetch_reddit, sources_news, "HTTPS")
+Rel(n_main, n_store, "upsert_item(item) — no score")
+Rel(n_main, n_render, "render(store)")
+Rel(n_main, n_bundle, "export → single digest.md")
+Rel(n_main, n_pub_nb, "if NOTEBOOKLM_NOTEBOOK_ID")
+Rel(n_main, n_pub_feed, "if FEED_BUCKET + upload_ok")
+Rel(n_pub_nb, nbl, "upload digest")
+Rel(n_pub_feed, nbl, "query top-5 via feed_prompt.FEED_PROMPT")
+Rel(n_pub_feed, s3, "put_object scraping/YYYY-MM-DD.md")
+Rel(n_store, news_db, "writes / reads")
+
+SHOW_LEGEND()
+@enduml

@@ -1,0 +1,43 @@
+@startuml C4_Context_Topics
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Context.puml
+
+title C4 Level 1 — Curator topics: jobs vs scraping\nTwo topic-specific curator systems share users + external dependencies; differ only in source set + output schema.
+
+AddElementTag("topic_jobs",  $bgColor="#1c2026", $fontColor="#e8eaed", $borderColor="#fbbf24", $legendText="jobs topic — scrape-job-curator")
+AddElementTag("topic_news",  $bgColor="#1c2026", $fontColor="#e8eaed", $borderColor="#5eead4", $legendText="scraping topic — scrape-news-curator")
+AddElementTag("shared",      $bgColor="#1c2026", $fontColor="#e8eaed", $borderColor="#9aa3ad", $legendText="Shared substrate — same code/infra for both topics")
+AddElementTag("external",    $bgColor="#0b0d10", $fontColor="#e8eaed", $borderColor="#9aa3ad", $legendText="External system")
+
+Person(operator, "Operator (Anak)", "Runs `jobs search/ask/top` and `curator ask` from the laptop. Reviews the per-day digest each morning.")
+
+System(jobs_system, "scrape-job-curator + jobs CLI", "Daily AWS cron pulls jobs from HN/RemoteOK/Remotive/WWR/Reddit · skill-relevance-scored · top-N per day. CLI for NL search + ask over the corpus.", $tags="topic_jobs")
+System(news_system, "scrape-news-curator + curator CLI", "Daily AWS cron pulls r/WebScraping posts + comments · markdown digest. CLI for NL ask over the running corpus.", $tags="topic_news")
+
+System_Ext(reddit, "Reddit (read-only JSON)", "r/forhire · r/MachineLearningJobs · r/jobbit (jobs side) + r/WebScraping (news side).", $tags="external")
+System_Ext(hn, "Hacker News (Algolia)", "Who-is-hiring monthly thread. Jobs side only.", $tags="external")
+System_Ext(boards, "RemoteOK · Remotive · WeWorkRemotely", "Public JSON/RSS job boards. Jobs side only.", $tags="external")
+System_Ext(doppler, "Doppler", "Secrets vault — Both Lambdas pull TS_AUTHKEY, NOTEBOOKLM_STORAGE_STATE, JOBS_/NOTEBOOKLM_NOTEBOOK_ID, JOBS_/FEED_BUCKET at cold start.", $tags="shared")
+System_Ext(notebooklm, "NotebookLM", "Two notebooks — one per topic. Each receives one rotating digest source.", $tags="shared")
+System_Ext(s3, "Amazon S3 (FEED_BUCKET)", "Per-day archives — jobs/YYYY-MM-DD.md + jobs/YYYY-MM-DD-top10.md · scraping/YYYY-MM-DD.md.", $tags="shared")
+System_Ext(laptop_proxy, "Laptop tinyproxy (residential ISP)", "Tailscale-fronted HTTP proxy on the operator's laptop. Both Lambdas egress through it to dodge AWS-IP blocks.", $tags="shared")
+
+Rel(operator, jobs_system, "jobs search · ask · top · list-days")
+Rel(operator, news_system, "curator ask · refresh")
+
+Rel(jobs_system, reddit,  "Fetch /new.json (r/forhire · r/MLjobs · r/jobbit)", "HTTPS via proxy")
+Rel(jobs_system, hn,      "Fetch Who-is-Hiring thread comments via Algolia", "HTTPS via proxy")
+Rel(jobs_system, boards,  "Fetch JSON/RSS catalogs", "HTTPS via proxy")
+Rel(news_system, reddit,  "Fetch r/WebScraping posts + comments", "HTTPS via proxy")
+
+Rel(jobs_system, doppler,    "Read JOBS_* + shared secrets")
+Rel(news_system, doppler,    "Read NOTEBOOKLM_* + shared secrets")
+Rel(jobs_system, notebooklm, "Upload corpus to JOBS_NOTEBOOK_ID · CLI queries it")
+Rel(news_system, notebooklm, "Upload digest to NOTEBOOKLM_NOTEBOOK_ID · CLI queries it")
+Rel(jobs_system, s3,         "Publish per-day digest + top-N to jobs/YYYY-MM-DD*.md")
+Rel(news_system, s3,         "Publish per-day feed to scraping/YYYY-MM-DD.md")
+Rel(jobs_system, laptop_proxy, "All outbound HTTP", "HTTP_PROXY=localhost:8889 → SOCKS5 → tailnet")
+Rel(news_system, laptop_proxy, "All outbound HTTP", "HTTP_PROXY=localhost:8889 → SOCKS5 → tailnet")
+
+SHOW_LEGEND()
+@enduml

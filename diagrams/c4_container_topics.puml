@@ -1,0 +1,76 @@
+@startuml C4_Container_Topics
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Container.puml
+
+title C4 Level 2 — Containers: jobs and scraping topics side-by-side\nTwo Lambdas share one ECR image; the function-level Command override and DOPPLER_TOKEN scope determine which curator runs.
+
+AddElementTag("topic_jobs",  $bgColor="#1c2026", $fontColor="#e8eaed", $borderColor="#fbbf24", $legendText="jobs topic containers")
+AddElementTag("topic_news",  $bgColor="#1c2026", $fontColor="#e8eaed", $borderColor="#5eead4", $legendText="scraping topic containers")
+AddElementTag("shared",      $bgColor="#1c2026", $fontColor="#e8eaed", $borderColor="#9aa3ad", $legendText="Shared substrate (one resource serves both topics)")
+AddElementTag("external",    $bgColor="#0b0d10", $fontColor="#e8eaed", $borderColor="#9aa3ad", $legendText="External system")
+
+Person(operator, "Operator (Anak)", "Laptop · WSL2")
+
+System_Boundary(laptop_b, "Operator's laptop (WSL2)") {
+    Container(jobs_cli,   "jobs CLI",    "Python (tools/jobs)",   "search · ask · top · list-days. Reads jobs.db; anthropic SDK ranks · NotebookLM Q&A.", $tags="topic_jobs")
+    Container(curator_cli,"curator CLI", "Node.js (curator)",     "ask · search · refresh · open. Shells out to notebooklm-py.", $tags="topic_news")
+    ContainerDb(jobs_db_local,  "jobs.db (local)", "SQLite", "sources + items + relevance · written by daily Lambda run; also written by ad-hoc local runs.", $tags="topic_jobs")
+    ContainerDb(news_db_local,  "news.db (local)", "SQLite", "sources + items (posts/comments, no relevance) · curator CLI's read corpus.", $tags="topic_news")
+    Container(tinyproxy,  "tinyproxy",   "Daemon, port 8888",     "Residential-ISP HTTP forward proxy. Both Lambdas egress through it via tailnet+SOCKS5.", $tags="shared")
+}
+
+System_Boundary(aws_b, "AWS account · ap-southeast-1") {
+    Container(sched_jobs,  "EventBridge Scheduler · daily 02:00 UTC", "aws.scheduler.Schedule", "scrape-job-curator-daily · cron(0 2 * * ? *) UTC = 09:00 ICT. Targets job Lambda via scheduler IAM role.", $tags="topic_jobs")
+    Container(sched_news,  "EventBridge Rule · daily 06:00 UTC",      "aws.events.Rule (legacy)", "scrape-news-curator-daily · cron(0 6 * * ? *) UTC. Targets news Lambda directly.", $tags="topic_news")
+
+    Container(lambda_jobs, "scrape-job-curator Lambda", "Python 3.12 · CMD job_handler.lambda_handler", "Doppler → Tailscale proxy bridge → job_curator.main(). 1024MB · 600s · image override.", $tags="topic_jobs")
+    Container(lambda_news, "scrape-news-curator Lambda","Python 3.12 · CMD handler.lambda_handler",    "Doppler → Tailscale proxy bridge → news_curator.main(). 1024MB · 600s.", $tags="topic_news")
+
+    ContainerDb(ecr,       "scrape-news-curator ECR repo", "Container image", "ONE image · copies both news_curator.py + job_curator.py + both handlers. Function-level CMD picks which.", $tags="shared")
+    ContainerDb(s3_bucket, "S3 FEED_BUCKET",    "Object store", "jobs/YYYY-MM-DD.md, jobs/YYYY-MM-DD-top10.md · scraping/YYYY-MM-DD.md.", $tags="shared")
+
+    Container(role_lambda_jobs,  "scrape-job-curator-lambda-role",     "IAM role",     "AWSLambdaBasicExecutionRole + inline s3:PutObject on jobs/*.", $tags="topic_jobs")
+    Container(role_sched_jobs,   "scrape-job-curator-scheduler-role",  "IAM role",     "Trusts scheduler.amazonaws.com (+ aws:SourceAccount). Inline lambda:InvokeFunction.", $tags="topic_jobs")
+    Container(role_lambda_news,  "scrape-news-curator-lambda-role",    "IAM role",     "AWSLambdaBasicExecutionRole. No S3 grant — news doesn't publish to S3 from Lambda.", $tags="topic_news")
+}
+
+System_Ext(doppler,     "Doppler · scrape/dev config", "Secrets vault", $tags="shared")
+System_Ext(notebooklm,  "NotebookLM · two notebooks", "Google product", $tags="shared")
+System_Ext(reddit,      "Reddit JSON", "External", $tags="external")
+System_Ext(hn,          "HN Algolia",  "External", $tags="external")
+System_Ext(boards,      "RemoteOK · Remotive · WWR RSS", "External", $tags="external")
+
+Rel(operator, jobs_cli,    "jobs <verb>")
+Rel(operator, curator_cli, "curator <verb>")
+Rel(jobs_cli,    jobs_db_local, "Read")
+Rel(curator_cli, news_db_local, "Read")
+
+Rel(sched_jobs, role_sched_jobs, "Assumes", "sts:AssumeRole")
+Rel(role_sched_jobs, lambda_jobs, "lambda:InvokeFunction")
+Rel(sched_news, lambda_news, "InvokeFunction (resource policy)", "AddPermission")
+
+Rel(lambda_jobs, ecr, "Pulls image · function-level CMD = job_handler.lambda_handler")
+Rel(lambda_news, ecr, "Pulls image · function-level CMD = handler.lambda_handler")
+
+Rel(lambda_jobs, role_lambda_jobs, "Assumes")
+Rel(lambda_news, role_lambda_news, "Assumes")
+
+Rel(lambda_jobs, doppler,    "DOPPLER_TOKEN → fetch JOBS_* + shared", "HTTPS")
+Rel(lambda_news, doppler,    "DOPPLER_TOKEN → fetch NOTEBOOKLM_* + shared", "HTTPS")
+Rel(lambda_jobs, tinyproxy,  "All HTTP via Tailscale → SOCKS5 → laptop", "tailnet")
+Rel(lambda_news, tinyproxy,  "All HTTP via Tailscale → SOCKS5 → laptop", "tailnet")
+
+Rel(tinyproxy, reddit, "HTTP forward")
+Rel(tinyproxy, hn,     "HTTP forward")
+Rel(tinyproxy, boards, "HTTP forward")
+
+Rel(lambda_jobs, notebooklm, "Upload jobs_digest.md · rotates JOBS_NOTEBOOK_ID source", "Playwright")
+Rel(lambda_news, notebooklm, "Upload digest.md · rotates NOTEBOOKLM_NOTEBOOK_ID source", "Playwright")
+Rel(jobs_cli,    notebooklm, "ask → chat.ask(JOBS_NOTEBOOK_ID, query)", "Playwright")
+Rel(curator_cli, notebooklm, "ask → chat.ask(NOTEBOOKLM_NOTEBOOK_ID, query)", "Playwright")
+
+Rel(lambda_jobs, s3_bucket, "PutObject jobs/YYYY-MM-DD*.md")
+Rel(lambda_news, s3_bucket, "PutObject scraping/YYYY-MM-DD.md (via FeedPublisher)")
+
+SHOW_LEGEND()
+@enduml
