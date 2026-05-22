@@ -14,6 +14,7 @@ from typing import Iterable
 
 import requests
 
+from curator.core.fetcher import Fetcher
 from curator.core.types import Item, Source
 
 logger = logging.getLogger(__name__)
@@ -192,10 +193,7 @@ class Store:
 
 # --------- fetchers ---------
 
-class Fetcher(ABC):
-    @abstractmethod
-    def fetch(self, source: Source, source_cfg: dict, cutoff_ts: float) -> Iterable[Item]:
-        ...
+# Fetcher ABC moved to curator.core.fetcher (Stage 2 of curator/core extraction).
 
 
 class RedditFetcher(Fetcher):

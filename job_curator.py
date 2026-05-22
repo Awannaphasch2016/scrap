@@ -40,6 +40,7 @@ from typing import Iterable
 
 import requests
 
+from curator.core.fetcher import Fetcher, _parse_iso, _parse_rfc822, _proxies, _strip_html
 from curator.core.types import Item, Source
 
 logger = logging.getLogger(__name__)
@@ -272,11 +273,7 @@ def score_item(item: Item) -> tuple[float, list[str]]:
 
 # --------- http helpers ---------
 
-def _proxies() -> dict | None:
-    http_proxy = os.environ.get("HTTP_PROXY")
-    if not http_proxy:
-        return None
-    return {"http": http_proxy, "https": os.environ.get("HTTPS_PROXY", http_proxy)}
+# _proxies moved to curator.core.fetcher (Stage 2 of curator/core extraction).
 
 
 def _get_json(url: str, timeout: int = 20) -> dict | list:
@@ -296,21 +293,10 @@ def _get_text(url: str, timeout: int = 20) -> str:
     return r.text
 
 
-def _strip_html(s: str) -> str:
-    if not s:
-        return ""
-    s = re.sub(r"<br\s*/?>", "\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"</p\s*>", "\n\n", s, flags=re.IGNORECASE)
-    s = re.sub(r"<[^>]+>", "", s)
-    return html.unescape(s).strip()
-
+# _strip_html moved to curator.core.fetcher.
 
 # --------- fetchers ---------
-
-class Fetcher(ABC):
-    @abstractmethod
-    def fetch(self, source: Source, cfg: dict, cutoff_ts: float) -> Iterable[Item]:
-        ...
+# Fetcher ABC moved to curator.core.fetcher (Stage 2 of curator/core extraction).
 
 
 class HNHiringFetcher(Fetcher):
@@ -559,31 +545,7 @@ FETCHERS: dict[str, Fetcher] = {
 
 # --------- date parsing ---------
 
-def _parse_iso(s: str) -> float:
-    if not s:
-        return 0.0
-    try:
-        # Remotive uses "2024-05-20T15:30:00", RemoteOK uses ISO 8601 with Z
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.timestamp()
-    except ValueError:
-        return 0.0
-
-
-def _parse_rfc822(s: str) -> float:
-    if not s:
-        return 0.0
-    try:
-        dt = parsedate_to_datetime(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.timestamp()
-    except (TypeError, ValueError):
-        return 0.0
+# _parse_iso and _parse_rfc822 moved to curator.core.fetcher.
 
 
 # --------- renderer ---------
