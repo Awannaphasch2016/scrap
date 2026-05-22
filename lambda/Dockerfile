@@ -11,6 +11,7 @@ RUN dnf install -y tar gzip && \
     rm -rf /tmp/tailscale_* && \
     dnf clean all
 
+COPY curator/ ${LAMBDA_TASK_ROOT}/curator/
 COPY news_curator.py ${LAMBDA_TASK_ROOT}/
 COPY job_curator.py ${LAMBDA_TASK_ROOT}/
 COPY feed_prompt.py ${LAMBDA_TASK_ROOT}/
