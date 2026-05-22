@@ -12,8 +12,6 @@ RUN dnf install -y tar gzip && \
     dnf clean all
 
 COPY curator/ ${LAMBDA_TASK_ROOT}/curator/
-COPY news_curator.py ${LAMBDA_TASK_ROOT}/
-COPY job_curator.py ${LAMBDA_TASK_ROOT}/
 COPY feed_prompt.py ${LAMBDA_TASK_ROOT}/
 COPY lambda/handler.py ${LAMBDA_TASK_ROOT}/
 COPY lambda/job_handler.py ${LAMBDA_TASK_ROOT}/
