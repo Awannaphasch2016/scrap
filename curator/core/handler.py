@@ -81,31 +81,19 @@ def _fetch_one_doppler_config(token: str, label: str) -> int:
 
 
 def _fetch_doppler_secrets() -> None:
-    """Pull from the topic's own Doppler config (DOPPLER_TOKEN → scrape/dev)
-    AND, when present, from the shared assistant-agent/dev config that holds
-    the cross-project Supabase credentials (DOPPLER_ASSISTANT_AGENT_TOKEN →
-    assistant-agent/dev).
-
-    Order matters · scrape/dev first, assistant-agent/dev second. Later
-    fetches OVERWRITE earlier ones on key collision (so if both configs
-    define the same key, assistant-agent wins). In practice the configs
-    don't overlap.
+    """Pull all secrets from this Lambda's Doppler config (DOPPLER_TOKEN →
+    scrape/dev). The config owns everything this Lambda needs at runtime:
+    AWS keys, Tailscale auth keys, NotebookLM tokens, and the Supabase
+    credentials for writing curator.items.
     """
     primary = os.environ.get("DOPPLER_TOKEN")
     if not primary:
-        logger.warning("DOPPLER_TOKEN not set; skipping primary Doppler fetch")
-    else:
-        try:
-            _fetch_one_doppler_config(primary, "scrape/dev")
-        except Exception as e:  # noqa: BLE001
-            logger.warning("primary doppler fetch failed: %s", e)
-
-    secondary = os.environ.get("DOPPLER_ASSISTANT_AGENT_TOKEN")
-    if secondary:
-        try:
-            _fetch_one_doppler_config(secondary, "assistant-agent/dev")
-        except Exception as e:  # noqa: BLE001
-            logger.warning("assistant-agent doppler fetch failed (non-fatal): %s", e)
+        logger.warning("DOPPLER_TOKEN not set; skipping Doppler fetch")
+        return
+    try:
+        _fetch_one_doppler_config(primary, "scrape/dev")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("doppler fetch failed: %s", e)
 
 
 def _prepare_writable_layout() -> None:
@@ -324,8 +312,8 @@ def _configure_schema_exposure(schemas: str) -> dict:
     + `NOTIFY pgrst, 'reload config'` through this Lambda's network position,
     which can reach Supabase Postgres on :5432 even when the laptop can't
     (residential ISP filters / Supabase pooler-steering). The Lambda already
-    has SUPABASE_DATABASE_URL from the assistant-agent/dev Doppler config —
-    same path the daily Supabase flush uses, no new secret.
+    has SUPABASE_DATABASE_URL from the scrape/dev Doppler config — same
+    path the daily Supabase flush uses, no new secret.
 
     Caveat: Supabase's dashboard config service may overwrite role-level
     settings on next project-config save. Treat as quick-fix, not durable

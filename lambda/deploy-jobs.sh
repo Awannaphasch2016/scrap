@@ -137,7 +137,7 @@ if aws lambda get-function --function-name "$FUNCTION_NAME" --region "$AWS_REGIO
         --timeout "$LAMBDA_TIMEOUT_S" \
         --memory-size "$LAMBDA_MEMORY_MB" \
         --image-config "$HANDLER_CMD" \
-        --environment "Variables={DOPPLER_TOKEN=$DOPPLER_TOKEN,DOPPLER_ASSISTANT_AGENT_TOKEN=$DOPPLER_ASSISTANT_AGENT_TOKEN,CURATOR_TOPIC=jobs}" \
+        --environment "Variables={DOPPLER_TOKEN=$DOPPLER_TOKEN,CURATOR_TOPIC=jobs}" \
         --region "$AWS_REGION" >/dev/null
     aws lambda wait function-updated --function-name "$FUNCTION_NAME" --region "$AWS_REGION"
     echo "    updated"
@@ -150,7 +150,7 @@ else
         --timeout "$LAMBDA_TIMEOUT_S" \
         --memory-size "$LAMBDA_MEMORY_MB" \
         --image-config "$HANDLER_CMD" \
-        --environment "Variables={DOPPLER_TOKEN=$DOPPLER_TOKEN,DOPPLER_ASSISTANT_AGENT_TOKEN=$DOPPLER_ASSISTANT_AGENT_TOKEN,CURATOR_TOPIC=jobs}" \
+        --environment "Variables={DOPPLER_TOKEN=$DOPPLER_TOKEN,CURATOR_TOPIC=jobs}" \
         --region "$AWS_REGION" >/dev/null
     aws lambda wait function-active --function-name "$FUNCTION_NAME" --region "$AWS_REGION"
     echo "    created"
