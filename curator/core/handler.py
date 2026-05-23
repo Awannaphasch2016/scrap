@@ -317,9 +317,54 @@ def _resolve_topic_module() -> str:
     return f"curator.topics.{module_name}"
 
 
+def _configure_schema_exposure(schemas: str) -> dict:
+    """One-shot ops branch · expose a set of Postgres schemas to PostgREST.
+
+    Routes the SQL pair `ALTER ROLE authenticator SET pgrst.db_schemas …`
+    + `NOTIFY pgrst, 'reload config'` through this Lambda's network position,
+    which can reach Supabase Postgres on :5432 even when the laptop can't
+    (residential ISP filters / Supabase pooler-steering). The Lambda already
+    has SUPABASE_DATABASE_URL from the assistant-agent/dev Doppler config —
+    same path the daily Supabase flush uses, no new secret.
+
+    Caveat: Supabase's dashboard config service may overwrite role-level
+    settings on next project-config save. Treat as quick-fix, not durable
+    IaC. Dashboard's Settings → API → Exposed schemas remains canonical.
+    """
+    import psycopg2
+
+    dsn = os.environ.get("SUPABASE_DATABASE_URL")
+    if not dsn:
+        raise RuntimeError("SUPABASE_DATABASE_URL not in env (Doppler fetch missing?)")
+    if not schemas:
+        raise RuntimeError("schemas payload empty · refusing to clear pgrst.db_schemas")
+
+    logger.info("configuring pgrst.db_schemas → %r", schemas)
+    with psycopg2.connect(dsn, connect_timeout=15) as conn:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(
+                "ALTER ROLE authenticator SET pgrst.db_schemas TO %s", (schemas,)
+            )
+            cur.execute("NOTIFY pgrst, 'reload config'")
+            cur.execute(
+                "SELECT rolconfig FROM pg_roles WHERE rolname = 'authenticator'"
+            )
+            rolconfig = cur.fetchone()[0]
+    logger.info("rolconfig now: %s", rolconfig)
+    return {"status": "ok", "schemas": schemas, "rolconfig": rolconfig}
+
+
 def lambda_handler(event, context):  # noqa: ARG001
     _prepare_writable_layout()
     _fetch_doppler_secrets()
+
+    action = (event or {}).get("action")
+    if action == "configure-schema-exposure":
+        # Skip egress + topic dispatch · Supabase is reachable from direct AWS
+        # egress, so we don't need Tailscale or the residential proxy bridge.
+        return _configure_schema_exposure(event.get("schemas", ""))
+
     _configure_egress()
     _log_egress_ip()
 

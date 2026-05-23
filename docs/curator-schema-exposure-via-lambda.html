@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Path B · expose curator schema via Lambda → Postgres</title>
+<link rel="stylesheet" href="../diagrams/viewer/diagram-viewer.css">
+<style>
+  :root {
+    --surface: #14171c;
+    --surface-2: #1c2026;
+    --text: #e8eaed;
+    --muted: #9aa3ad;
+    --border: #2a2f37;
+    --accent: #5eead4;
+    --accent-warm: #fbbf24;
+    --good: #2ecc71;
+    --bad: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 24px 64px; font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--text); background: var(--surface); max-width: 1080px; margin-inline: auto; }
+  h1 { font-size: 1.6rem; margin: 1.4rem 0 0.5rem; }
+  h2 { font-size: 1.2rem; margin-top: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h2 .lvl { color: var(--muted); font-size: 0.85rem; font-weight: normal; }
+  .section-blurb { color: var(--muted); margin: 0.4rem 0 1rem; }
+  code { background: var(--surface-2); padding: 2px 6px; border-radius: 3px; color: var(--accent); font-size: 0.92em; }
+  a { color: var(--accent); }
+  pre.mermaid { background: #ffffff; border: 1px solid var(--border); border-radius: 6px; padding: 1rem; }
+  pre.snippet { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 16px; overflow-x: auto; font-size: 0.86rem; color: var(--text); font-family: ui-monospace, Menlo, monospace; }
+  .callout { background: var(--surface-2); border: 1px solid var(--border); border-left: 4px solid var(--accent-warm); border-radius: 4px; padding: 12px 18px; margin: 14px 0 22px; font-size: 0.95rem; }
+  .callout strong { color: var(--accent-warm); }
+  .callout.good { border-left-color: var(--good); }
+  .callout.good strong { color: var(--good); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.bad strong { color: var(--bad); }
+  .key-good { color: var(--good); font-weight: 600; }
+  table.kv { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 0.92rem; }
+  table.kv th, table.kv td { text-align: left; padding: 6px 10px; border: 1px solid var(--border); vertical-align: top; }
+  table.kv th { background: var(--surface-2); color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+
+  <h1>Path B · expose <code>curator</code> schema by routing SQL through the Lambda</h1>
+  <p class="section-blurb">
+    Path A (the dashboard click) is the obvious fix. <strong>Path B</strong> exists because the laptop can't currently reach
+    <code>db.vcrpfmledxsgvgiuliaq.supabase.co:5432</code> (direct-PG times out), but the deployed Lambda <em>can</em> — proved
+    by the daily Supabase flush already working. So we borrow the Lambda's network position to run one SQL statement.
+    Steps <strong class="key-good">5–8</strong> (rectangle in <span class="key-good">green</span>) are the part only the Lambda
+    can do — that's the entire point of the path.
+  </p>
+
+  <h2>Sequence diagram</h2>
+
+  <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Op as "Operator laptop<br/>(WSL2 · aws CLI)"
+    participant LB as "AWS Lambda<br/>(scrape-news-curator)"
+    participant DP as "Doppler<br/>(assistant-agent/dev)"
+    participant PG as "Supabase Postgres<br/>(direct :5432)"
+    participant PR as "PostgREST<br/>(in-Supabase process)"
+    participant BR as "Browser<br/>(/curator tab)"
+
+    Op->>LB: aws lambda invoke<br/>--payload {action: configure-schema-exposure,<br/>           schemas: public,personal_website,curator}
+    Note over LB: cold start · _prepare_writable_layout · HOME=/tmp
+    LB->>DP: HTTPS · fetch assistant-agent/dev secrets<br/>(using DOPPLER_ASSISTANT_AGENT_TOKEN)
+    DP-->>LB: SUPABASE_DATABASE_URL = postgresql://postgres@db.&lt;ref&gt;.supabase.co:5432/postgres
+    Note over LB: handler sees event.action == configure-schema-exposure<br/>routes to config branch (not the curator pipeline)
+
+    rect rgba(46,204,113,0.15)
+        LB->>PG: psycopg2.connect(SUPABASE_DATABASE_URL)
+        Note over LB,PG: TCP :5432 reachable from AWS<br/>was timing out from the laptop · this is the whole point of Path B
+        LB->>PG: ALTER ROLE authenticator<br/>SET pgrst.db_schemas TO `public, personal_website, curator`
+        LB->>PG: NOTIFY pgrst, `reload config`
+        Note over PG: writes role-level config + emits LISTEN/NOTIFY channel signal
+        PG-->>LB: COMMAND OK (both statements)
+        LB->>PG: SELECT rolconfig FROM pg_roles WHERE rolname = `authenticator`<br/>(verify the value stuck)
+        PG-->>LB: [pgrst.db_schemas = public, personal_website, curator]
+    end
+
+    LB-->>Op: { status: ok, schemas: public, personal_website, curator }
+    Note over PR: PostgREST process (separate from PG) sees the NOTIFY<br/>refreshes its in-memory db-schemas allow-list within ~1s
+    Note over BR: user hard-reloads /curator
+    BR->>PR: GET /rest/v1/items?…  · Accept-Profile: curator · apikey: sb_publishable_…
+    PR->>PR: allow-list now contains curator → route into curator schema
+    PR->>PG: SELECT … FROM curator.items WHERE published_at >= …
+    PG-->>PR: row results
+    PR-->>BR: 200 · [{...}, {...}, ...]
+    Note over BR: render items in sidebar · subscribe to Realtime INSERTs
+  </pre>
+
+  <h2>Why each step exists</h2>
+
+  <table class="kv">
+    <thead><tr><th>#</th><th>Step</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Operator runs <code>aws lambda invoke</code> with a JSON payload</td><td>The Lambda is already deployed with Supabase access via Doppler. Re-using it avoids spinning up new infra for a one-shot task.</td></tr>
+      <tr><td>2–3</td><td>Lambda fetches Doppler secrets (existing bootstrap)</td><td>Gives the Lambda its <code>SUPABASE_DATABASE_URL</code> at cold start · same path the daily curator run uses. No new secret needed.</td></tr>
+      <tr><td>4</td><td>Handler dispatches on <code>event.action</code></td><td>One-shot variant of the handler · branches to "config mode" instead of the normal curator pipeline. ~10 lines of new code.</td></tr>
+      <tr><td><strong>5</strong></td><td><strong>psycopg2 connects on :5432</strong></td><td><strong>The reason Path B exists.</strong> AWS network reaches Supabase's direct-PG endpoint; this WSL2 laptop currently can't.</td></tr>
+      <tr><td><strong>6</strong></td><td><strong><code>ALTER ROLE authenticator SET pgrst.db_schemas TO …</code></strong></td><td>The <code>authenticator</code> role is the database user PostgREST uses for every request. Settings stored on this role become PostgREST's runtime config. The role-level setting is the documented PostgREST way to override <code>db-schemas</code> from SQL.</td></tr>
+      <tr><td><strong>7</strong></td><td><strong><code>NOTIFY pgrst, 'reload config'</code></strong></td><td>PostgREST <code>LISTEN</code>s on the <code>pgrst</code> channel for the literal payload <code>"reload config"</code>. Receiving it triggers an in-memory config refresh without restarting the process. Picks up the new <code>db-schemas</code> within ~1s.</td></tr>
+      <tr><td>8</td><td>Verify the role-config row</td><td>Belt-and-suspenders · confirm the <code>ALTER</code> actually persisted on the role before declaring success.</td></tr>
+      <tr><td>9</td><td>Lambda returns to laptop</td><td>Status ok · operator can move on.</td></tr>
+      <tr><td>10</td><td>PostgREST in-process refresh</td><td>The notify-listener side effect · invisible to us, happens inside Supabase's PostgREST container.</td></tr>
+      <tr><td>11–14</td><td>Browser request now succeeds</td><td>Same browser code as before · only PostgREST's allow-list changed. <code>curator</code> is now in scope → request routes into the schema → returns rows.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>The handler change · what would actually ship</h2>
+  <p class="section-blurb">
+    Roughly 25 lines added to <code>curator/core/handler.py</code>, gated on the new <code>event.action</code> string so the daily SNS-fan-out
+    invocation still routes to the normal curator pipeline unchanged.
+  </p>
+
+  <pre class="snippet">def lambda_handler(event, context):
+    _prepare_writable_layout()
+    _fetch_doppler_secrets()
+    _configure_egress()
+    _log_egress_ip()
+
+    # NEW · one-shot ops branch · doesn't touch the curator topics
+    action = (event or {}).get("action")
+    if action == "configure-schema-exposure":
+        return _configure_schema_exposure(event.get("schemas", ""))
+
+    # ...existing CURATOR_TOPIC dispatch unchanged...
+    topic_module = _resolve_topic_module()
+    import_module(topic_module).main()
+    return {"status": "ok"}
+
+
+def _configure_schema_exposure(schemas: str) -> dict:
+    """Run the one SQL pair that exposes a set of schemas to PostgREST.
+    `schemas` is a comma-separated string; passed verbatim into the SQL value.
+    """
+    import psycopg2
+    dsn = os.environ["SUPABASE_DATABASE_URL"]
+    with psycopg2.connect(dsn, connect_timeout=15) as conn:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("ALTER ROLE authenticator SET pgrst.db_schemas TO %s", (schemas,))
+            cur.execute("NOTIFY pgrst, 'reload config'")
+            cur.execute("SELECT rolconfig FROM pg_roles WHERE rolname='authenticator'")
+            rolconfig = cur.fetchone()[0]
+    logger.info("schema exposure configured · rolconfig=%s", rolconfig)
+    return {"status": "ok", "schemas": schemas, "rolconfig": rolconfig}</pre>
+
+  <h2>The caveat · this might not stick</h2>
+
+  <div class="callout bad">
+    <strong>Supabase Cloud may overwrite role-level config on its next dashboard config save.</strong>
+    The PostgREST <code>db-schemas</code> setting is conceptually a project-level config that Supabase's
+    dashboard config service owns. When you save anything in <em>Settings → API</em>, the service re-writes
+    its full PostgREST config — and may stomp on role-level overrides you set via SQL.
+    <br><br>
+    Path B works <em>right now</em>, but if you ever click <em>Save</em> on any API setting in the dashboard,
+    you may need to re-run Path B. The durable fix is still Path A (add <code>curator</code> to <em>Exposed
+    schemas</em> in the dashboard) because that's the source the config service reads from.
+    <br><br>
+    Practical sequence: <strong>Path B unblocks you in 60 seconds; Path A is the durable lock.</strong> Run B
+    if you can't get to the dashboard right this moment; do A whenever you next have it open.
+  </div>
+
+  <h2>How to actually run it</h2>
+
+  <pre class="snippet">cd ~/dev/scrap
+
+# 1. Ship the handler change (~25 lines added to curator/core/handler.py)
+#    + redeploy the image · same flow we've used all session
+SKIP_BUILD=0 doppler run --project scrape --config dev -- ./lambda/deploy-jobs.sh
+
+# 2. Fire the one-shot
+aws lambda invoke \
+  --function-name scrape-news-curator \
+  --region ap-southeast-1 \
+  --payload '{"action":"configure-schema-exposure","schemas":"public,personal_website,curator"}' \
+  --cli-binary-format raw-in-base64-out \
+  /tmp/expose-out.json
+cat /tmp/expose-out.json
+# Expected: {"status":"ok","schemas":"public,personal_website,curator","rolconfig":["pgrst.db_schemas=public,personal_website,curator"]}
+
+# 3. Verify from this laptop · PostgREST should now accept Accept-Profile: curator
+URL=$(doppler secrets get PUBLIC_SUPABASE_URL --project assistant-agent --config dev --plain)
+KEY=$(doppler secrets get PUBLIC_SUPABASE_PUBLISHABLE_KEY --project assistant-agent --config dev --plain)
+curl -sS -H "apikey: $KEY" -H "Accept-Profile: curator" \
+  "$URL/rest/v1/items?select=topic&limit=1"
+# Expected: a JSON array · NOT a PGRST106 error
+
+# 4. Hard-reload /curator in browser · sidebar populates</pre>
+
+  <h2>What Path B is NOT</h2>
+
+  <ul>
+    <li>It's <strong>not a workaround</strong> for any auth or RLS problem. The schema's GRANTs and RLS policies are already correct (verified in Stage A of the Supabase migration). The only missing piece is PostgREST's <code>db-schemas</code> allow-list — Path B writes to exactly that, nothing else.</li>
+    <li>It's <strong>not idempotent across dashboard saves</strong>. The dashboard's config service owns the canonical truth; SQL-side overrides can be silently overwritten. See the caveat above.</li>
+    <li>It's <strong>not a privilege escalation</strong>. The Lambda already has <code>SUPABASE_DATABASE_URL</code> (with embedded postgres-superuser password) for its daily write path. <code>ALTER ROLE authenticator SET …</code> is well within that capability. No new IAM, no new Doppler secret.</li>
+    <li>It's <strong>not the right answer if you can click the dashboard</strong>. Path A is faster (10s vs ~5 min including the handler code change), more durable, and uses the channel Supabase tells you to use.</li>
+  </ul>
+
+  <p class="section-blurb" style="margin-top: 28px;">
+    To view this page: <code>./scripts/serve-diagrams.sh PORT=8000 SHOWCASE_PATH=docs/curator-schema-exposure-via-lambda.html</code> · open the printed URL.
+  </p>
+
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js"></script>
+<script src="../diagrams/viewer/diagram-viewer.js" defer></script>
+</body>
+</html>

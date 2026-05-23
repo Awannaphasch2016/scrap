@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>/curator load error · Invalid schema: curator</title>
+<link rel="stylesheet" href="../diagrams/viewer/diagram-viewer.css">
+<style>
+  :root {
+    --surface: #14171c;
+    --surface-2: #1c2026;
+    --text: #e8eaed;
+    --muted: #9aa3ad;
+    --border: #2a2f37;
+    --accent: #5eead4;
+    --accent-warm: #fbbf24;
+    --bad: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 24px 64px; font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--text); background: var(--surface); max-width: 1080px; margin-inline: auto; }
+  h1 { font-size: 1.6rem; margin: 1.4rem 0 0.5rem; }
+  h2 { font-size: 1.2rem; margin-top: 2rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h2 .lvl { color: var(--muted); font-size: 0.85rem; font-weight: normal; }
+  .section-blurb { color: var(--muted); margin: 0.4rem 0 1rem; }
+  code { background: var(--surface-2); padding: 2px 6px; border-radius: 3px; color: var(--accent); font-size: 0.92em; }
+  a { color: var(--accent); }
+  pre.mermaid { background: #ffffff; border: 1px solid var(--border); border-radius: 6px; padding: 1rem; }
+  .callout { background: var(--surface-2); border: 1px solid var(--border); border-left: 4px solid var(--accent-warm); border-radius: 4px; padding: 12px 18px; margin: 14px 0 22px; font-size: 0.95rem; }
+  .callout strong { color: var(--accent-warm); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.bad strong { color: var(--bad); }
+  .callout pre { margin: 8px 0 0; background: var(--surface); padding: 8px 12px; border-radius: 4px; font-size: 0.85rem; color: var(--text); overflow-x: auto; font-family: ui-monospace, Menlo, monospace; }
+  .key-bad { color: var(--bad); font-weight: 600; }
+  table.kv { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 0.92rem; }
+  table.kv th, table.kv td { text-align: left; padding: 6px 10px; border: 1px solid var(--border); vertical-align: top; }
+  table.kv th { background: var(--surface-2); color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+
+  <h1>/curator load error · <code>Invalid schema: curator</code></h1>
+  <p class="section-blurb">
+    The browser at <code>https://personal-website-five-topaz-79.vercel.app/curator</code> renders the page shell fine, but the first Supabase
+    query fails with <code>PGRST106 · Invalid schema: curator</code>. The page surfaces this as <code>load error: Invalid schema: curator</code>
+    in place of the items list. The root cause sits at exactly one step of the request flow — at the PostgREST front door, after the API key
+    has been accepted, when it tries to route the request into the <code>curator</code> schema.
+  </p>
+
+  <div class="callout bad">
+    <strong>Literal error</strong> · returned by PostgREST to <code>supabase-js</code>:
+    <pre>{
+  "code":    "PGRST106",
+  "message": "Invalid schema: curator",
+  "hint":    null,
+  "details": null
+}
+// PostgREST adds the actual cause in a sibling response when probed:
+//   "Only the following schemas are exposed: public, personal_website"</pre>
+  </div>
+
+  <h2>Request flow <span class="lvl">browser → Vercel → Supabase PostgREST</span></h2>
+  <p class="section-blurb">
+    Step <strong class="key-bad">6</strong> is where it fails — the rectangle in <span class="key-bad">red</span>. Every step before
+    that succeeds; the API key is valid, the URL is correct, the JS bundle is fresh. The bad step is a project-level configuration
+    miss in Supabase, not a code, secret, or network issue.
+  </p>
+
+  <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant U as "User browser<br/>(/curator tab)"
+    participant V as "Vercel CDN"
+    participant JS as "@supabase/supabase-js<br/>(browser-side)"
+    participant PG as "Supabase PostgREST<br/>(REST + Realtime gateway)"
+    participant DB as "Postgres<br/>(curator.items table)"
+
+    U->>V: GET /curator
+    V-->>U: HTML + chunks (_astro/curator…js, supabase…js)
+    Note over U: parse + execute · createClient(url, publishable_key, {db:{schema:'curator'}})
+    U->>JS: supabase.from('items').select('*').gte('published_at', cutoff)
+    JS->>PG: GET /rest/v1/items?select=*&published_at=gte.… <br/>headers: apikey=sb_publishable_… · Accept-Profile=curator
+    Note over PG: ✓ apikey accepted (publishable key is valid for this project)<br/>✓ JWT decoded · role=anon
+    rect rgba(239,68,68,0.18)
+        PG->>PG: lookup schema 'curator' in db-schemas config<br/>config = [public, personal_website] · curator NOT listed
+        PG-->>JS: HTTP 400 · PGRST106 "Invalid schema: curator"
+    end
+    Note over PG,DB: ✗ request never reaches Postgres · rejected at the PostgREST front door
+    JS-->>U: { data: null, error: { code: 'PGRST106', message: 'Invalid schema: curator' } }
+    Note over U: render itemsListEl.innerHTML = "load error: Invalid schema: curator"
+  </pre>
+
+  <div class="callout">
+    <strong>Why the schema is registered in Postgres but invisible to PostgREST</strong> · Supabase's REST/Realtime layer only routes
+    requests to schemas listed in the project's <em>Exposed schemas</em> setting (in dashboard
+    <code>Settings → API → Exposed schemas</code>). The default is <code>public</code> only. The <code>personal_website</code> schema
+    was added when the <code>/review</code> page was wired. The <code>curator</code> schema we created in Stage A of the Supabase
+    migration <em>exists in Postgres</em> (we can see it via psycopg2), but PostgREST refuses to route requests into it until it's
+    added to the exposed list. RLS policies, indexes, and Realtime publication membership are all already correct — they just don't
+    get exercised because PostgREST short-circuits at step 6.
+  </div>
+
+  <h2>Stage-by-stage outcome</h2>
+
+  <table class="kv">
+    <thead>
+      <tr><th>#</th><th>Step</th><th>Result</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>1–2</td><td>GET /curator · Vercel serves HTML + JS bundles</td><td>✅</td></tr>
+      <tr><td>3</td><td>Astro <code>&lt;script&gt;</code> creates Supabase client with publishable key + <code>schema: 'curator'</code></td><td>✅ (no network yet)</td></tr>
+      <tr><td>4</td><td><code>supabase.from('items').select(…)</code> initiates a query against the <code>curator</code> schema</td><td>✅</td></tr>
+      <tr><td>5</td><td>Browser sends HTTPS to PostgREST with <code>Accept-Profile: curator</code> + valid <code>apikey</code></td><td>✅ TLS + auth OK</td></tr>
+      <tr><td><strong class="key-bad">6</strong></td><td><strong class="key-bad">PostgREST checks <code>db-schemas</code> · <code>curator</code> not in <code>[public, personal_website]</code> → rejects</strong></td><td><strong class="key-bad">❌ PGRST106</strong></td></tr>
+      <tr><td>7–8</td><td><code>supabase-js</code> returns <code>{error}</code> · page renders "load error: Invalid schema: curator"</td><td>✅ (error correctly propagated)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Resolution</h2>
+  <p class="section-blurb">One config change, no code change, no redeploy.</p>
+
+  <ol>
+    <li>Open <a href="https://supabase.com/dashboard/project/vcrpfmledxsgvgiuliaq/settings/api" target="_blank">Project Settings → API</a>.</li>
+    <li>In the <strong>Exposed schemas</strong> field, change<br><code>public, personal_website</code><br>to<br><code>public, personal_website, curator</code>.</li>
+    <li>Click <strong>Save</strong>. PostgREST reloads its config in ~5–10 seconds.</li>
+    <li>Hard-reload <code>/curator</code> in the browser (<code>Ctrl + Shift + R</code>) to bypass any cached failure state.</li>
+  </ol>
+
+  <div class="callout">
+    <strong>Programmatic alternative</strong> (if you ever lose dashboard access or want IaC-managed exposure):
+    <pre>-- via psycopg2 with SUPABASE_DATABASE_URL
+ALTER ROLE authenticator SET pgrst.db_schemas TO 'public, personal_website, curator';
+NOTIFY pgrst, 'reload config';</pre>
+    Works in self-hosted PostgREST and most Supabase setups, but the dashboard's config service may overwrite role-level settings
+    on next project save. Treat as a quick fix, not a durable IaC path.
+  </div>
+
+  <p class="section-blurb" style="margin-top: 28px;">
+    To view this page: <code>./scripts/serve-diagrams.sh PORT=8000 SHOWCASE_PATH=docs/curator-invalid-schema-error.html</code> · open the printed URL.
+  </p>
+
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js"></script>
+<script src="../diagrams/viewer/diagram-viewer.js" defer></script>
+</body>
+</html>
