@@ -106,14 +106,22 @@ class RedditFetcher(Fetcher):
         )
 
     def _comment_to_item(self, c: dict, source_id: str, parent_post_id: str) -> Item:
+        body = html.unescape(c.get("body", ""))
+        author = c.get("author", "")
+        # Comments aren't shown as their own cards in the curator UI (they're
+        # filtered out client-side · see web/src/pages/index.astro VIEWS).
+        # Title here is just an honest identifier for the digest / NotebookLM
+        # pipelines, which DO render comments grouped under their parent post.
+        first_line = body.split("\n", 1)[0].strip()
+        title = first_line[:120] if first_line else f"comment by {author or 'unknown'}"
         return Item(
             id=f"reddit:{c['id']}",
             source_id=source_id,
             type="comment",
-            title="",
-            url="",
-            author=c.get("author", ""),
-            content=html.unescape(c.get("body", "")),
+            title=title,
+            url=f"https://www.reddit.com/comments/{parent_post_id}/_/{c['id']}/",
+            author=author,
+            content=body,
             published_at=c.get("created_utc", 0),
             metadata={
                 "score": c.get("score", 0),
