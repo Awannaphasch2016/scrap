@@ -8,7 +8,9 @@ query and Realtime-subscribe to canonical state.
 Why direct Postgres (psycopg2) instead of Supabase REST/PostgREST:
   - Lambda only writes, never reads · REST adds an HTTP per row vs one TCP
     connection with execute_values for ~40 rows
-  - No service_role key needed · direct PG auth via SUPABASE_DATABASE_URL
+  - No secret-key (sb_secret_xxx / legacy service_role) needed · direct PG
+    auth via SUPABASE_DATABASE_URL · the URL's embedded password authenticates
+    the Lambda as the database superuser, which RLS doesn't gate
   - One-shot connection per invocation · no pool maintenance
   - psycopg2.extras.execute_values batches the insert into one round-trip
 
