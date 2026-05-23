@@ -74,6 +74,22 @@ def run(cfg: TopicConfig) -> None:
 
     print(f"\nTotals: {total_fetched} fetched, {total_kept} kept")
 
+    # Supabase mirror · canonical state for the /curator page.
+    # Non-fatal · if the flush fails, the run still publishes to S3 + NotebookLM.
+    supabase_dsn = os.environ.get("SUPABASE_DATABASE_URL")
+    if supabase_dsn:
+        print(f"\nFlushing to Supabase (topic={cfg.name})...")
+        try:
+            from curator.core.supabase_store import SupabaseStore
+            with SupabaseStore(supabase_dsn) as ss:
+                n_src, n_items = ss.flush_from(store, cfg.name)
+            print(f"  flushed {n_src} sources, {n_items} items")
+        except Exception as e:  # noqa: BLE001
+            print(f"  supabase flush failed (non-fatal): {e}")
+            logger.exception("supabase flush failed")
+    else:
+        print("\n(set SUPABASE_DATABASE_URL to mirror state to Supabase)")
+
     if cfg.renderer_factory:
         print("\nRendering HTML...")
         cfg.renderer_factory(cfg).render(store, cfg.html_path)

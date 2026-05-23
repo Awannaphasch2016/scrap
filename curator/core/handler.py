@@ -53,18 +53,14 @@ TOPIC_DISPATCH = {
 }
 
 
-def _fetch_doppler_secrets() -> None:
-    """Pull secrets from Doppler config bound to DOPPLER_TOKEN and inject into env.
+def _fetch_one_doppler_config(token: str, label: str) -> int:
+    """Pull all non-AWS_* / non-DOPPLER_* secrets from one Doppler config and
+    inject into os.environ. Returns count of secrets imported.
 
-    Skips AWS_* keys · they're laptop credentials for the deploy CLI, NOT
-    runtime values. The Lambda has its own instance role; AWS_* envs would
-    OVERRIDE the role and cause InvalidToken errors on boto3 calls.
+    AWS_* skip: AWS_ACCESS_KEY_ID etc. are laptop deploy creds; the Lambda
+    has its own execution role and setting AWS_* in env would OVERRIDE
+    that role with empty/wrong creds, causing InvalidToken on boto3 calls.
     """
-    token = os.environ.get("DOPPLER_TOKEN")
-    if not token:
-        logger.warning("DOPPLER_TOKEN not set; skipping Doppler secret fetch")
-        return
-
     req = urllib.request.Request(
         DOPPLER_DOWNLOAD_URL,
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
@@ -80,7 +76,36 @@ def _fetch_doppler_secrets() -> None:
             continue
         os.environ[k] = v
         n += 1
-    logger.info("fetched %d secrets from Doppler (AWS_* skipped to preserve role)", n)
+    logger.info("fetched %d secrets from Doppler [%s]", n, label)
+    return n
+
+
+def _fetch_doppler_secrets() -> None:
+    """Pull from the topic's own Doppler config (DOPPLER_TOKEN → scrape/dev)
+    AND, when present, from the shared assistant-agent/dev config that holds
+    the cross-project Supabase credentials (DOPPLER_ASSISTANT_AGENT_TOKEN →
+    assistant-agent/dev).
+
+    Order matters · scrape/dev first, assistant-agent/dev second. Later
+    fetches OVERWRITE earlier ones on key collision (so if both configs
+    define the same key, assistant-agent wins). In practice the configs
+    don't overlap.
+    """
+    primary = os.environ.get("DOPPLER_TOKEN")
+    if not primary:
+        logger.warning("DOPPLER_TOKEN not set; skipping primary Doppler fetch")
+    else:
+        try:
+            _fetch_one_doppler_config(primary, "scrape/dev")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("primary doppler fetch failed: %s", e)
+
+    secondary = os.environ.get("DOPPLER_ASSISTANT_AGENT_TOKEN")
+    if secondary:
+        try:
+            _fetch_one_doppler_config(secondary, "assistant-agent/dev")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("assistant-agent doppler fetch failed (non-fatal): %s", e)
 
 
 def _prepare_writable_layout() -> None:
