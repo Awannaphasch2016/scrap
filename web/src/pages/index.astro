@@ -1,32 +1,64 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
 
-// curator/<topic> view · queries the shared Supabase project (knowledgebase),
-// schema "curator". Publishable key is RLS-gated to SELECT on
-// curator.{sources,items} (open-read). PUBLIC_SUPABASE_URL +
-// PUBLIC_SUPABASE_PUBLISHABLE_KEY are inlined at build via
-//   doppler run --project scrape --config dev -- npm run build
+// curator/<view> page · queries Supabase `curator` schema (RLS-gated SELECT
+// via PUBLIC_SUPABASE_PUBLISHABLE_KEY, inlined at build by
+//   doppler run --project scrape --config dev -- npm run build).
+//
+// Sidebar is a tree:
+//   newsfeed             (curated · top-15 by relevance · cross-topic)
+//   ───
+//   all
+//    ├ <topic>           (every item in topic, across all sources)
+//    │   └ <source>      (one feed)
+//    └ ...
+// Tree is data-driven from curator.sources. Comments (type='comment') are
+// hidden from cards but kept in DB for the digest / NotebookLM pipelines.
+// Chevron clicks toggle expand/collapse only · row clicks filter only
+// (Model 1 — independent click targets).
 ---
 
 <BaseLayout title="Curator · Anak" description="Daily-curated topics — scraping news, job leads, scored against my skill profile.">
   <section class="curator">
-    <aside class="topics">
-      <h2>Topics</h2>
-      <ul id="topic-list">
-        <li class="topic-placeholder">loading…</li>
-      </ul>
-      <div class="topic-controls">
-        <label class="toggle">
-          <input type="checkbox" id="sort-relevance" />
-          <span>Sort by relevance score</span>
-        </label>
+    <aside class="sidebar">
+
+      <div class="section">
+        <h3>Curated</h3>
+        <div class="node" id="node-newsfeed" data-key="view:newsfeed">
+          <div class="left-cluster"><span class="name">newsfeed</span></div>
+          <span class="count" id="c-newsfeed">·</span>
+        </div>
+      </div>
+
+      <div class="section tree">
+        <h3>Browse</h3>
+        <div id="tree-root">
+          <div class="node-placeholder">loading…</div>
+        </div>
+      </div>
+
+      <div class="footer-bits">
+        <div class="legend">
+          <strong>newsfeed</strong> — top 15 by relevance (cross-topic)<br>
+          <strong>all</strong> — every item across every topic<br>
+          <strong>topic</strong> — every item in that topic<br>
+          <strong>source</strong> — drill down to one feed<br>
+          <span class="warn">⚠</span> — silent &gt; 7d
+        </div>
         <div class="window-info" id="window-info"></div>
       </div>
     </aside>
 
     <main class="items" id="items-pane">
       <div class="items-header" id="items-header">
-        <h2 id="items-title">All topics · today</h2>
+        <div class="items-header-left">
+          <h2 id="items-title">newsfeed</h2>
+          <div class="breadcrumb" id="breadcrumb"></div>
+          <label class="sort-toggle hidden" id="sort-toggle">
+            <input type="checkbox" id="sort-rel" />
+            <span>sort by relevance</span>
+          </label>
+        </div>
         <div class="items-meta" id="items-meta"></div>
       </div>
       <div id="items-list">
@@ -36,7 +68,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   </section>
 </BaseLayout>
 
-<style>
+<style is:global>
+  /* is:global · dynamically-created elements (.item, .node, etc.) don't get
+     Astro's scoped class hash. Single-page app, no conflict surface. */
+
   .curator {
     display: grid;
     grid-template-columns: 260px 1fr;
@@ -44,104 +79,172 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     min-height: calc(100vh - 220px);
   }
 
-  /* Sidebar */
-  .topics {
+  /* === Sidebar === */
+  .sidebar {
     border-right: 1px solid var(--border);
     padding-right: 1rem;
   }
-  .topics h2 {
-    font-size: 0.85rem;
+  .sidebar h3 {
+    font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.12em;
     color: var(--fg-muted);
-    margin: 0 0 0.7rem;
+    margin: 0 0 0.6rem;
+    font-family: var(--mono);
+    font-weight: 600;
   }
-  .topics ul {
-    list-style: none;
-    padding: 0;
-    margin: 0 0 1.2rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
+  .sidebar .section { margin-bottom: 1.4rem; }
+  .node-placeholder {
+    color: var(--fg-muted);
+    font-style: italic;
+    font-size: 0.85rem;
+    padding: 0.4rem 0.6rem;
   }
-  .topics li {
+
+  .node {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.45rem 0.7rem;
+    padding: 0.4rem 0.6rem;
     border-radius: 4px;
     cursor: pointer;
     font-family: var(--mono);
-    font-size: 0.88rem;
-    color: var(--fg);
+    font-size: 0.85rem;
+    color: var(--accent);
+    user-select: none;
+    transition: background 0.1s;
   }
-  .topics li:hover { background: var(--bg-elev); }
-  .topics li.active {
-    background: var(--bg-elev);
+  .node:hover { background: var(--bg-elev); }
+  .node.active {
+    background: var(--border);
     border-left: 3px solid var(--accent);
-    padding-left: calc(0.7rem - 3px);
+    padding-left: calc(0.6rem - 3px);
+    font-weight: 600;
   }
-  .topics li.topic-placeholder {
-    color: var(--fg-muted);
-    font-style: italic;
-    cursor: default;
-  }
-  .topics li.topic-placeholder:hover { background: transparent; }
-  .topics .count {
-    font-size: 0.74rem;
+  .node .count {
+    font-size: 0.7rem;
     color: var(--fg-muted);
     background: var(--bg-elev);
     border-radius: 999px;
-    padding: 0.1rem 0.5rem;
-    min-width: 1.5rem;
+    padding: 0.05rem 0.5rem;
+    min-width: 1.4rem;
     text-align: center;
+    font-weight: 400;
   }
-  .topics li.active .count {
+  .node.active .count {
     background: var(--accent);
     color: var(--bg);
   }
-  .topic-controls {
-    border-top: 1px solid var(--border);
-    padding-top: 0.9rem;
-    font-size: 0.82rem;
+
+  /* chevron — Model 1: independent click target, toggles expansion only */
+  .chev {
+    display: inline-block;
+    width: 1rem;
+    text-align: center;
+    margin-right: 0.2rem;
     color: var(--fg-muted);
-  }
-  .toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
     cursor: pointer;
     user-select: none;
+    font-size: 0.7rem;
+    line-height: 1;
+    border-radius: 2px;
+    transition: color 0.1s;
   }
-  .window-info {
-    margin-top: 0.6rem;
-    font-family: var(--mono);
-    font-size: 0.75rem;
+  .chev:hover { color: var(--accent); background: rgba(126, 231, 199, 0.08); }
+  .node[data-collapsed="true"]  .chev::before { content: '▸'; }
+  .node[data-collapsed="false"] .chev::before { content: '▾'; }
+  .chev-spacer { display: inline-block; width: 1rem; margin-right: 0.2rem; }
+  .node.hidden { display: none; }
+
+  .level-1 { padding-left: 1.5rem; }
+  .level-1.active { padding-left: calc(1.5rem - 3px); }
+  .level-2 { padding-left: 2.6rem; font-size: 0.78rem; color: var(--fg-dim); }
+  .level-2.active { padding-left: calc(2.6rem - 3px); }
+  .level-2:hover .extlink { opacity: 1; }
+  .level-2 .extlink {
+    opacity: 0;
+    font-size: 0.7rem;
+    color: var(--fg-muted);
+    margin-left: 0.3rem;
+    text-decoration: none;
+    border-bottom: none;
+    transition: opacity 0.1s;
+  }
+  .level-2 .extlink:hover { color: var(--accent); }
+  .level-2 .warn {
+    color: var(--warn, #f1c40f);
+    margin-right: 0.3rem;
+    font-size: 0.85rem;
+  }
+  .level-2.silent { color: var(--fg-muted); }
+  .level-2.silent .count { color: var(--warn, #f1c40f); }
+
+  .left-cluster {
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    flex: 1;
+    min-width: 0;
+  }
+  .left-cluster .name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  /* Main pane */
+  .footer-bits {
+    border-top: 1px solid var(--border);
+    padding-top: 0.9rem;
+    margin-top: 1rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--fg-muted);
+    line-height: 1.7;
+  }
+  .footer-bits .legend strong { color: var(--fg-dim); font-weight: 600; }
+  .footer-bits .legend .warn { color: var(--warn, #f1c40f); }
+  .footer-bits .window-info { margin-top: 0.7rem; }
+
+  /* === Items pane === */
   .items-header {
     display: flex;
-    align-items: baseline;
+    align-items: flex-start;
     justify-content: space-between;
     margin-bottom: 1rem;
     padding-bottom: 0.6rem;
     border-bottom: 1px solid var(--border);
+    gap: 1rem;
   }
-  .items-header h2 {
-    margin: 0;
-    font-size: 1.1rem;
+  .items-header-left { display: flex; flex-direction: column; gap: 0.3rem; }
+  .items-header h2 { margin: 0; font-size: 1.1rem; }
+  .breadcrumb {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--fg-muted);
   }
+  .breadcrumb .sep { margin: 0 0.3rem; }
+  .breadcrumb .leaf { color: var(--accent); }
+  .sort-toggle {
+    display: flex; align-items: center; gap: 0.4rem;
+    cursor: pointer; user-select: none;
+    font-family: var(--mono); font-size: 0.72rem;
+    color: var(--fg-muted);
+  }
+  .sort-toggle input { margin: 0; cursor: pointer; }
+  .sort-toggle:hover { color: var(--fg-dim); }
+  .sort-toggle.hidden { display: none; }
   .items-meta {
     font-family: var(--mono);
     font-size: 0.78rem;
     color: var(--fg-muted);
+    white-space: nowrap;
   }
   .loading, .empty {
     color: var(--fg-muted);
     font-style: italic;
     padding: 1rem 0;
   }
+
   .item {
     border-left: 3px solid var(--border);
     padding: 0.7rem 0.9rem;
@@ -149,17 +252,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     background: var(--bg-elev);
     border-radius: 4px;
   }
-  .item.hi { border-left-color: #2ecc71; }
+  .item.hi  { border-left-color: #2ecc71; }
   .item.mid { border-left-color: #f1c40f; }
-  .item-title {
-    font-weight: 500;
-    margin: 0 0 0.25rem;
-    line-height: 1.4;
-  }
-  .item-title a {
-    color: var(--fg);
-    text-decoration: none;
-  }
+  .item-title { font-weight: 500; margin: 0 0 0.25rem; line-height: 1.4; }
+  .item-title a { color: var(--fg); text-decoration: none; }
   .item-title a:hover { text-decoration: underline; color: var(--accent); }
   .item-meta {
     font-family: var(--mono);
@@ -167,11 +263,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     color: var(--fg-muted);
     margin: 0.2rem 0;
   }
-  .item-meta .score {
-    color: #2ecc71;
-    font-weight: 600;
-    margin-right: 0.4rem;
-  }
+  .item-meta .score { color: #2ecc71; font-weight: 600; margin-right: 0.4rem; }
   .item-meta .topic-tag {
     background: var(--bg);
     border: 1px solid var(--border);
@@ -180,6 +272,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     margin-right: 0.5rem;
     color: var(--fg);
   }
+  .item-meta .comment-count { color: var(--accent-dim); }
   .item-tags {
     margin-top: 0.3rem;
     font-family: var(--mono);
@@ -189,24 +282,22 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   .item-body {
     margin-top: 0.5rem;
     font-size: 0.88rem;
-    color: var(--fg-muted);
-    max-height: 5.5em;
+    color: var(--fg-dim);
+    max-height: 8em;
     overflow: hidden;
     position: relative;
+    line-height: 1.55;
+    white-space: pre-wrap;
   }
   .item-body::after {
     content: '';
     position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    bottom: 0; left: 0; right: 0;
     height: 1.5em;
     background: linear-gradient(transparent, var(--bg-elev));
     pointer-events: none;
   }
-  .item.expanded .item-body {
-    max-height: none;
-  }
+  .item.expanded .item-body { max-height: none; }
   .item.expanded .item-body::after { display: none; }
   .item-toggle {
     margin-top: 0.5rem;
@@ -221,10 +312,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   .item-toggle:hover { color: var(--accent); }
 
   @media (max-width: 720px) {
-    .curator {
-      grid-template-columns: 1fr;
-    }
-    .topics {
+    .curator { grid-template-columns: 1fr; }
+    .sidebar {
       border-right: none;
       border-bottom: 1px solid var(--border);
       padding-right: 0;
@@ -237,45 +326,57 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   import { makeSupabase } from '../lib/supabase';
 
   type Item = {
-    topic: string;
-    id: string;
-    source_id: string;
-    type: string;
-    title: string | null;
-    url: string | null;
-    author: string | null;
-    content: string | null;
-    published_at: string | null;
-    fetched_at: string;
-    relevance: number | null;
-    metadata: Record<string, unknown> | null;
+    topic: string; id: string; source_id: string; type: string;
+    title: string | null; url: string | null; author: string | null;
+    content: string | null; published_at: string | null; fetched_at: string;
+    relevance: number | null; metadata: Record<string, unknown> | null;
   };
-
   type Source = { topic: string; id: string; name: string; type: string; url: string | null };
 
-  const WINDOW_HOURS = 36;
+  type Selection =
+    | { kind: 'newsfeed' }
+    | { kind: 'all' }
+    | { kind: 'topic';  topic: string }
+    | { kind: 'source'; topic: string; sourceId: string };
+
+  const WINDOW_HOURS  = 36;
+  const NEWSFEED_SIZE = 15;
+  const SILENT_MS     = 7 * 86400 * 1000;
 
   const supabase = makeSupabase();
 
-  const topicListEl = document.getElementById('topic-list')!;
-  const itemsListEl = document.getElementById('items-list')!;
+  // ---- DOM handles ----
+  const treeRootEl   = document.getElementById('tree-root')!;
+  const newsfeedEl   = document.getElementById('node-newsfeed')!;
+  const itemsListEl  = document.getElementById('items-list')!;
   const itemsTitleEl = document.getElementById('items-title')!;
-  const itemsMetaEl = document.getElementById('items-meta')!;
+  const itemsMetaEl  = document.getElementById('items-meta')!;
+  const breadcrumbEl = document.getElementById('breadcrumb')!;
   const windowInfoEl = document.getElementById('window-info')!;
-  const sortRelevanceEl = document.getElementById('sort-relevance') as HTMLInputElement;
-
-  // Deep-link · `curator open <topic>` opens /?topic=<topic> so the sidebar
-  // lands on the right pane. Read once at module init; the rest of the
-  // page treats activeTopic as the source of truth.
-  const _initialTopic = new URLSearchParams(window.location.search).get('topic');
-  let activeTopic: string | null = _initialTopic && _initialTopic.length > 0
-    ? _initialTopic
-    : null;
-  let sortByRelevance = false;
-  let allItems: Item[] = [];
-  let sourcesByKey: Map<string, Source> = new Map();
+  const sortToggleEl = document.getElementById('sort-toggle')!;
+  const sortRelEl    = document.getElementById('sort-rel') as HTMLInputElement;
+  const cNewsfeedEl  = document.getElementById('c-newsfeed')!;
 
   windowInfoEl.textContent = `window: last ${WINDOW_HOURS}h`;
+
+  // ---- State ----
+  let allItems: Item[] = [];
+  let sources: Source[] = [];                          // raw rows
+  let sourcesByKey = new Map<string, Source>();        // "topic:source_id" → Source
+  let lastSeenBySource = new Map<string, number>();    // "topic:source_id" → ms
+  let selection: Selection = parseSelectionFromUrl();
+  // sort-by-relevance toggle is per selection; newsfeed is always relevance,
+  // so it doesn't appear there.
+  const sortRelByKey = new Map<string, boolean>();
+
+  // ---- Utils ----
+  const byTime = (a: Item, b: Item): number => {
+    const ta = a.published_at ? Date.parse(a.published_at) : 0;
+    const tb = b.published_at ? Date.parse(b.published_at) : 0;
+    return tb - ta;
+  };
+  const byRelevance = (a: Item, b: Item): number =>
+    (b.relevance ?? -Infinity) - (a.relevance ?? -Infinity);
 
   function escape(s: string): string {
     return s.replace(/[&<>"']/g, (c) =>
@@ -288,36 +389,242 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const t = Date.parse(iso);
     if (!t) return '';
     const delta = Math.max(0, (nowMs - t) / 1000);
-    if (delta < 3600) return `${Math.round(delta / 60)}m ago`;
+    if (delta < 3600)  return `${Math.round(delta / 60)}m ago`;
     if (delta < 86400) return `${Math.round(delta / 3600)}h ago`;
     return `${Math.round(delta / 86400)}d ago`;
   }
 
-  function sourceName(item: Item): string {
-    const src = sourcesByKey.get(`${item.topic}:${item.source_id}`);
-    return src?.name ?? item.source_id;
+  function topicLabel(t: string): string { return t === 'scraping' ? 'scrape' : t; }
+  const notComment = (it: Item): boolean => it.type !== 'comment';
+
+  function selectionKey(s: Selection): string {
+    if (s.kind === 'newsfeed') return 'view:newsfeed';
+    if (s.kind === 'all')      return 'root:all';
+    if (s.kind === 'topic')    return `topic:${s.topic}`;
+    return `source:${s.topic}:${s.sourceId}`;
   }
 
+  function parseSelectionFromUrl(): Selection {
+    const p = new URLSearchParams(window.location.search);
+    const view = p.get('view');
+    if (view === 'all') return { kind: 'all' };
+    const topic = p.get('topic');
+    const source = p.get('source');
+    if (topic && source) return { kind: 'source', topic, sourceId: source };
+    if (topic === 'jobs')     return { kind: 'topic', topic: 'jobs' };
+    if (topic === 'scraping') return { kind: 'topic', topic: 'scraping' };
+    if (topic === 'scrape')   return { kind: 'topic', topic: 'scraping' };  // alias
+    return { kind: 'newsfeed' };
+  }
+
+  function isSilent(topic: string, sourceId: string): boolean {
+    const k = `${topic}:${sourceId}`;
+    const lastMs = lastSeenBySource.get(k);
+    if (lastMs == null) return true;
+    return (Date.now() - lastMs) > SILENT_MS;
+  }
+
+  function sourceDisplayName(topic: string, sourceId: string): string {
+    const s = sourcesByKey.get(`${topic}:${sourceId}`);
+    return s?.name ?? sourceId;
+  }
+
+  // ---- Filtering / sorting ----
+  function predicate(s: Selection): (it: Item) => boolean {
+    if (s.kind === 'source') return (it) => notComment(it) && it.topic === s.topic && it.source_id === s.sourceId;
+    if (s.kind === 'topic')  return (it) => notComment(it) && it.topic === s.topic;
+    return notComment; // newsfeed, all
+  }
+  function useRelevance(s: Selection): boolean {
+    if (s.kind === 'newsfeed') return true;
+    return sortRelByKey.get(selectionKey(s)) === true;
+  }
+  function visibleItems(): Item[] {
+    const filtered = allItems.filter(predicate(selection));
+    const sorted = filtered.sort(useRelevance(selection) ? byRelevance : byTime);
+    if (selection.kind === 'newsfeed') return sorted.slice(0, NEWSFEED_SIZE);
+    return sorted;
+  }
+
+  // ---- Sidebar rendering ----
+  function buildSidebar(): void {
+    // Group sources by topic
+    const byTopic = new Map<string, Source[]>();
+    for (const s of sources) {
+      if (!byTopic.has(s.topic)) byTopic.set(s.topic, []);
+      byTopic.get(s.topic)!.push(s);
+    }
+    for (const arr of byTopic.values()) {
+      arr.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    const topics = [...byTopic.keys()].sort();
+
+    // Preserve previous collapse state if rebuilding
+    const prevCollapsed = new Map<string, string>();
+    treeRootEl.querySelectorAll<HTMLElement>('.node[data-collapsed]').forEach((n) => {
+      prevCollapsed.set(n.dataset.key!, n.dataset.collapsed!);
+    });
+
+    const html: string[] = [];
+    // root: all
+    html.push(`
+      <div class="node" data-key="root:all" data-collapsed="${prevCollapsed.get('root:all') ?? 'false'}">
+        <div class="left-cluster">
+          <span class="chev" title="expand/collapse"></span>
+          <span class="name">all</span>
+        </div>
+        <span class="count" data-count-key="root:all">·</span>
+      </div>
+    `);
+    for (const t of topics) {
+      const tKey = `topic:${t}`;
+      const tLabel = topicLabel(t);
+      html.push(`
+        <div class="node level-1" data-key="${escape(tKey)}" data-parent="root:all"
+             data-collapsed="${prevCollapsed.get(tKey) ?? 'false'}">
+          <div class="left-cluster">
+            <span class="chev" title="expand/collapse"></span>
+            <span class="name">${escape(tLabel)}</span>
+          </div>
+          <span class="count" data-count-key="${escape(tKey)}">·</span>
+        </div>
+      `);
+      for (const s of byTopic.get(t)!) {
+        const sKey = `source:${t}:${s.id}`;
+        const silent = isSilent(t, s.id);
+        const url = s.url ?? '';
+        html.push(`
+          <div class="node level-2 ${silent ? 'silent' : ''}" data-key="${escape(sKey)}" data-parent="${escape(tKey)}">
+            <div class="left-cluster">
+              <span class="chev-spacer"></span>
+              ${silent ? '<span class="warn" title="0 items in last 7d">⚠</span>' : ''}
+              <span class="name">${escape(s.name)}</span>
+              ${url ? `<a href="${escape(url)}" target="_blank" rel="noopener" class="extlink" onclick="event.stopPropagation()">↗</a>` : ''}
+            </div>
+            <span class="count" data-count-key="${escape(sKey)}">·</span>
+          </div>
+        `);
+      }
+    }
+    treeRootEl.innerHTML = html.join('');
+    wireSidebar();
+    applyCollapseState();
+    syncActive();
+    updateCounts();
+  }
+
+  function wireSidebar(): void {
+    // Chevron clicks · expand/collapse only, do NOT change selection
+    treeRootEl.querySelectorAll<HTMLElement>('.chev').forEach((chev) => {
+      chev.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const n = chev.closest('.node') as HTMLElement;
+        n.dataset.collapsed = n.dataset.collapsed === 'true' ? 'false' : 'true';
+        applyCollapseState();
+      });
+    });
+    // Node row clicks · change selection only
+    treeRootEl.querySelectorAll<HTMLElement>('.node').forEach((n) => {
+      n.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('.chev')) return;
+        selection = nodeKeyToSelection(n.dataset.key!);
+        syncActive();
+        render();
+      });
+    });
+  }
+
+  // Newsfeed lives outside the tree; wire it once.
+  newsfeedEl.addEventListener('click', () => {
+    selection = { kind: 'newsfeed' };
+    syncActive();
+    render();
+  });
+
+  function nodeKeyToSelection(key: string): Selection {
+    if (key === 'root:all') return { kind: 'all' };
+    if (key.startsWith('topic:')) return { kind: 'topic', topic: key.slice('topic:'.length) };
+    if (key.startsWith('source:')) {
+      const rest = key.slice('source:'.length);
+      const idx = rest.indexOf(':');
+      return { kind: 'source', topic: rest.slice(0, idx), sourceId: rest.slice(idx + 1) };
+    }
+    return { kind: 'newsfeed' };
+  }
+
+  function isAncestorCollapsed(node: HTMLElement): boolean {
+    let parentKey = node.dataset.parent;
+    while (parentKey) {
+      const parent = treeRootEl.querySelector<HTMLElement>(`.node[data-key="${parentKey}"]`);
+      if (!parent) break;
+      if (parent.dataset.collapsed === 'true') return true;
+      parentKey = parent.dataset.parent;
+    }
+    return false;
+  }
+  function applyCollapseState(): void {
+    treeRootEl.querySelectorAll<HTMLElement>('.node').forEach((n) => {
+      n.classList.toggle('hidden', isAncestorCollapsed(n));
+    });
+  }
+
+  function syncActive(): void {
+    const sk = selectionKey(selection);
+    newsfeedEl.classList.toggle('active', selection.kind === 'newsfeed');
+    treeRootEl.querySelectorAll<HTMLElement>('.node').forEach((n) => {
+      n.classList.toggle('active', n.dataset.key === sk);
+    });
+  }
+
+  function updateCounts(): void {
+    const posts = allItems.filter(notComment);
+    cNewsfeedEl.textContent = String(Math.min(NEWSFEED_SIZE, posts.length));
+
+    const byTopic = new Map<string, number>();
+    const bySource = new Map<string, number>();
+    for (const p of posts) {
+      byTopic.set(p.topic, (byTopic.get(p.topic) ?? 0) + 1);
+      const sk = `${p.topic}:${p.source_id}`;
+      bySource.set(sk, (bySource.get(sk) ?? 0) + 1);
+    }
+    treeRootEl.querySelectorAll<HTMLElement>('[data-count-key]').forEach((el) => {
+      const k = el.dataset.countKey!;
+      if (k === 'root:all') el.textContent = String(posts.length);
+      else if (k.startsWith('topic:')) el.textContent = String(byTopic.get(k.slice('topic:'.length)) ?? 0);
+      else if (k.startsWith('source:')) {
+        const rest = k.slice('source:'.length);
+        const idx = rest.indexOf(':');
+        const tk = `${rest.slice(0, idx)}:${rest.slice(idx + 1)}`;
+        el.textContent = String(bySource.get(tk) ?? 0);
+      }
+    });
+  }
+
+  // ---- Item card rendering ----
   function renderItem(item: Item, nowMs: number): HTMLElement {
     const el = document.createElement('article');
     const score = item.relevance ?? 0;
-    const cls = score >= 6 ? 'item hi' : score >= 3 ? 'item mid' : 'item';
-    el.className = cls;
+    el.className = score >= 6 ? 'item hi' : score >= 3 ? 'item mid' : 'item';
 
     const title = item.title || '(untitled)';
-    const url = item.url || '';
+    const url   = item.url || '';
     const titleHTML = url
       ? `<a href="${escape(url)}" target="_blank" rel="noopener">${escape(title)}</a>`
       : escape(title);
 
+    const md = (item.metadata ?? {}) as Record<string, unknown>;
+
     const meta: string[] = [];
     if (item.relevance != null) meta.push(`<span class="score">${item.relevance.toFixed(1)}</span>`);
-    meta.push(`<span class="topic-tag">${escape(item.topic)}</span>`);
-    meta.push(escape(sourceName(item)));
+    meta.push(`<span class="topic-tag">${escape(topicLabel(item.topic))}</span>`);
+    meta.push(escape(sourceDisplayName(item.topic, item.source_id)));
     meta.push(humanAge(item.published_at, nowMs));
     if (item.author) meta.push(`by ${escape(item.author)}`);
+    const numComments = typeof md.num_comments === 'number' ? md.num_comments : 0;
+    if (numComments > 0) {
+      meta.push(`<span class="comment-count">${numComments} comment${numComments === 1 ? '' : 's'}</span>`);
+    }
 
-    const md = (item.metadata ?? {}) as Record<string, unknown>;
     const tags = Array.isArray(md.tags) ? (md.tags as string[]).slice(0, 6) : [];
     const tagsHTML = tags.length > 0
       ? `<div class="item-tags">${tags.map((t) => escape(t)).join(' · ')}</div>`
@@ -325,7 +632,7 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 
     const body = (item.content ?? '').trim();
     const bodyHTML = body
-      ? `<div class="item-body">${escape(body.slice(0, 600))}</div>
+      ? `<div class="item-body">${escape(body)}</div>
          <button class="item-toggle" type="button" data-action="toggle">expand ▾</button>`
       : '';
 
@@ -342,91 +649,89 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       const btn = e.currentTarget as HTMLButtonElement;
       btn.textContent = el.classList.contains('expanded') ? 'collapse ▴' : 'expand ▾';
     });
-
     return el;
   }
 
-  function visibleItems(): Item[] {
-    const filtered = activeTopic == null
-      ? allItems
-      : allItems.filter((i) => i.topic === activeTopic);
-    if (sortByRelevance) {
-      return [...filtered].sort((a, b) => (b.relevance ?? -Infinity) - (a.relevance ?? -Infinity));
+  // ---- Header / breadcrumb ----
+  function syncHeader(itemCount: number): void {
+    let title = 'newsfeed';
+    let crumb = 'cross-topic · top by relevance';
+    if (selection.kind === 'all')   { title = 'all';                   crumb = 'every topic · every source'; }
+    if (selection.kind === 'topic') { title = topicLabel(selection.topic); crumb = `${title} · all sources`; }
+    if (selection.kind === 'source') {
+      const name = sourceDisplayName(selection.topic, selection.sourceId);
+      title = name;
+      crumb = `${topicLabel(selection.topic)} <span class="sep">›</span> <span class="leaf">${escape(name)}</span>`;
     }
-    return [...filtered].sort((a, b) => {
-      const ta = a.published_at ? Date.parse(a.published_at) : 0;
-      const tb = b.published_at ? Date.parse(b.published_at) : 0;
-      return tb - ta;
-    });
+    itemsTitleEl.textContent = title;
+    breadcrumbEl.innerHTML = crumb;
+
+    const useRel = useRelevance(selection);
+    itemsMetaEl.textContent = `${itemCount} item${itemCount === 1 ? '' : 's'} · sorted by ${useRel ? 'relevance' : 'time'}`;
+
+    if (selection.kind === 'newsfeed') {
+      sortToggleEl.classList.add('hidden');
+    } else {
+      sortToggleEl.classList.remove('hidden');
+      sortRelEl.checked = sortRelByKey.get(selectionKey(selection)) === true;
+    }
   }
 
-  function render() {
+  function render(): void {
     const nowMs = Date.now();
     const items = visibleItems();
     itemsListEl.innerHTML = '';
     if (items.length === 0) {
-      itemsListEl.innerHTML = '<div class="empty">no items in this window</div>';
+      itemsListEl.innerHTML = '<div class="empty">no items in this view</div>';
     } else {
-      for (const item of items) {
-        itemsListEl.appendChild(renderItem(item, nowMs));
-      }
+      for (const item of items) itemsListEl.appendChild(renderItem(item, nowMs));
     }
-    itemsTitleEl.textContent = activeTopic
-      ? `${activeTopic} · last ${WINDOW_HOURS}h`
-      : `All topics · last ${WINDOW_HOURS}h`;
-    itemsMetaEl.textContent = `${items.length} item${items.length === 1 ? '' : 's'} · sorted by ${sortByRelevance ? 'relevance' : 'time'}`;
+    syncHeader(items.length);
   }
 
-  function renderSidebar() {
-    const counts: Map<string, number> = new Map();
-    for (const item of allItems) counts.set(item.topic, (counts.get(item.topic) ?? 0) + 1);
-    const topics = [...counts.keys()].sort();
+  sortRelEl.addEventListener('change', () => {
+    if (selection.kind === 'newsfeed') return;
+    sortRelByKey.set(selectionKey(selection), sortRelEl.checked);
+    render();
+  });
 
-    topicListEl.innerHTML = '';
-    const allLi = document.createElement('li');
-    allLi.className = activeTopic == null ? 'active' : '';
-    allLi.dataset.topic = '';
-    allLi.innerHTML = `<span>all</span><span class="count">${allItems.length}</span>`;
-    topicListEl.appendChild(allLi);
-
-    for (const topic of topics) {
-      const li = document.createElement('li');
-      li.className = topic === activeTopic ? 'active' : '';
-      li.dataset.topic = topic;
-      li.innerHTML = `<span>${escape(topic)}</span><span class="count">${counts.get(topic)}</span>`;
-      topicListEl.appendChild(li);
-    }
-
-    topicListEl.querySelectorAll<HTMLLIElement>('li[data-topic]').forEach((li) => {
-      li.addEventListener('click', () => {
-        const t = li.dataset.topic || '';
-        activeTopic = t === '' ? null : t;
-        renderSidebar();
-        render();
-      });
-    });
-  }
-
+  // ---- Data loading ----
   async function loadOnce(): Promise<void> {
     const cutoffMs = Date.now() - WINDOW_HOURS * 3600 * 1000;
     const cutoffIso = new Date(cutoffMs).toISOString();
 
-    const [{ data: items, error: e1 }, { data: sources, error: e2 }] = await Promise.all([
+    const [
+      { data: items, error: e1 },
+      { data: srcRows, error: e2 },
+      { data: lastSeenRows, error: e3 },
+    ] = await Promise.all([
       supabase.from('items').select('*').gte('published_at', cutoffIso).order('published_at', { ascending: false }),
       supabase.from('sources').select('*'),
+      // For the silent>7d signal — fetch (topic, source_id, published_at) for
+      // every item (no window filter) sorted desc; the first row per
+      // (topic,source_id) is that source's last_seen. Light: 3 cols × N rows.
+      supabase.from('items').select('topic,source_id,published_at').order('published_at', { ascending: false }),
     ]);
 
     if (e1) {
       itemsListEl.innerHTML = `<div class="empty">load error: ${escape(e1.message)}</div>`;
       return;
     }
-    if (e2) {
-      console.warn('sources load error', e2);
-    }
-    allItems = (items as Item[]) ?? [];
-    sourcesByKey = new Map(((sources as Source[]) ?? []).map((s) => [`${s.topic}:${s.id}`, s]));
+    if (e2) console.warn('sources load error', e2);
+    if (e3) console.warn('last-seen load error', e3);
 
-    renderSidebar();
+    allItems = (items as Item[]) ?? [];
+    sources = (srcRows as Source[]) ?? [];
+    sourcesByKey = new Map(sources.map((s) => [`${s.topic}:${s.id}`, s]));
+
+    lastSeenBySource.clear();
+    for (const r of (lastSeenRows as { topic: string; source_id: string; published_at: string | null }[]) ?? []) {
+      if (!r.published_at) continue;
+      const k = `${r.topic}:${r.source_id}`;
+      if (!lastSeenBySource.has(k)) lastSeenBySource.set(k, Date.parse(r.published_at));
+    }
+
+    buildSidebar();
     render();
   }
 
@@ -434,38 +739,33 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const channel = supabase
       .channel('curator-items-stream')
       .on(
-        // @ts-expect-error · supabase-js typing for postgres_changes is loose
+        // @ts-expect-error · supabase-js postgres_changes typing is loose
         'postgres_changes',
         { event: 'INSERT', schema: 'curator', table: 'items' },
         (payload: { new: Item }) => {
           const incoming = payload.new;
           const idx = allItems.findIndex((i) => i.id === incoming.id && i.topic === incoming.topic);
-          if (idx >= 0) {
-            allItems[idx] = incoming;
-          } else {
-            allItems.unshift(incoming);
+          if (idx >= 0) allItems[idx] = incoming;
+          else allItems.unshift(incoming);
+
+          if (incoming.published_at) {
+            const k = `${incoming.topic}:${incoming.source_id}`;
+            const t = Date.parse(incoming.published_at);
+            const prev = lastSeenBySource.get(k);
+            if (prev == null || t > prev) lastSeenBySource.set(k, t);
           }
-          renderSidebar();
+          buildSidebar();
           render();
         },
       )
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          console.log('[curator] realtime subscribed');
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        if (status === 'SUBSCRIBED') console.log('[curator] realtime subscribed');
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.warn('[curator] realtime status:', status);
         }
       });
-
-    window.addEventListener('beforeunload', () => {
-      supabase.removeChannel(channel);
-    });
+    window.addEventListener('beforeunload', () => { supabase.removeChannel(channel); });
   }
-
-  sortRelevanceEl.addEventListener('change', () => {
-    sortByRelevance = sortRelevanceEl.checked;
-    render();
-  });
 
   loadOnce()
     .then(() => subscribeRealtime())
@@ -473,4 +773,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       itemsListEl.innerHTML = `<div class="empty">init error: ${escape(String(err?.message ?? err))}</div>`;
       console.error(err);
     });
+</script>
+
+<script is:inline define:vars={{}}>
+  /* expose --warn in global tokens (global.css owns the others) */
+  document.documentElement.style.setProperty('--warn', '#f1c40f');
 </script>
