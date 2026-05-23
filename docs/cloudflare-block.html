@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Why Upwork blocked the scraper — Diagnostic</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .mermaid {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-top: 12px;
+    overflow-x: auto;
+  }
+  ol.steps { padding-left: 20px; margin-top: 12px; }
+  ol.steps li { margin: 10px 0; }
+  ol.steps code {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--surface-2);
+    padding: 2px 6px;
+    border-radius: 3px;
+    color: var(--accent);
+  }
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    padding: 14px 18px;
+    margin-top: 16px;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    font-size: 15px;
+  }
+  .callout strong { color: var(--accent); }
+</style>
+</head>
+<body>
+<main class="container">
+
+  <a class="back" href="index.html">← Back to profile</a>
+
+  <section class="hero">
+    <div class="eyebrow">Diagnostic · Why the scraper failed</div>
+    <h1>Upwork's Cloudflare block, step by step</h1>
+    <p class="one-liner">A trace of what happened when <code>curl_cffi</code> tried to fetch the Upwork job search page, and what a real browser would have done differently.</p>
+  </section>
+
+  <section class="section">
+    <h2>1. What actually happened (failed flow)</h2>
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant S as scraper.py<br/>(curl_cffi)
+    participant CF as Cloudflare edge
+    participant UW as Upwork origin
+
+    S->>CF: GET /nx/search/jobs/?q=python<br/>TLS fingerprint = Chrome 120<br/>User-Agent = Chrome 120
+    Note over CF: Inspect request signals:<br/>• TLS fingerprint OK<br/>• No cf_clearance cookie<br/>• No prior browsing context<br/>• IP reputation unknown
+    CF->>CF: Decision:<br/>serve JS challenge
+    CF-->>S: HTTP 403<br/>cf-mitigated: challenge<br/>Body = HTML with embedded JS puzzle
+    Note over S: curl_cffi cannot execute JavaScript.<br/>It receives the challenge HTML<br/>and stores it as plain text.
+    S->>S: Read response.text<br/>Title = "Challenge - Upwork"<br/>No job data present
+    Note over S,UW: Request never reached Upwork's origin servers.
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>2. The same request in a real browser (would-succeed flow)</h2>
+    <div class="mermaid">
+sequenceDiagram
+    autonumber
+    participant B as Browser<br/>(e.g. Playwright + Chromium)
+    participant CF as Cloudflare edge
+    participant UW as Upwork origin
+
+    B->>CF: GET /nx/search/jobs/?q=python
+    CF-->>B: HTTP 403 + JS challenge page
+    Note over B: Parse HTML.<br/>Execute challenge JS in a real V8 engine.<br/>Compute proof-of-work / fingerprint token.<br/>Set cf_clearance cookie.
+    B->>CF: Re-request /nx/search/jobs/?q=python<br/>Cookie: cf_clearance=&lt;token&gt;
+    CF->>CF: Validate cookie<br/>against expected token
+    CF->>UW: Proxy request through
+    UW-->>CF: HTML with job listings
+    CF-->>B: HTTP 200 + actual page
+    Note over B: Browser renders page,<br/>job tiles become readable.
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>3. Plain-English step list</h2>
+    <ol class="steps">
+      <li>Our Python script sent a normal HTTPS <code>GET</code> request to Upwork's search URL, with <code>curl_cffi</code> impersonating Chrome 120's TLS fingerprint and User-Agent.</li>
+      <li>The request never reached Upwork. It hit <strong>Cloudflare</strong>, which sits in front of Upwork as a reverse proxy and bot-protection layer.</li>
+      <li>Cloudflare inspected the request and saw red flags: <strong>no <code>cf_clearance</code> cookie</strong>, no prior browsing session, an IP it didn't recognize as human-trusted. Even though the TLS fingerprint looked like Chrome, the absence of a prior browser session was enough.</li>
+      <li>Cloudflare returned <code>HTTP 403</code> with the header <code>cf-mitigated: challenge</code>, and a body containing an HTML page with embedded JavaScript — the "challenge."</li>
+      <li>A real browser would run that JavaScript, compute a token, set <code>cf_clearance</code>, and retry. <code>curl_cffi</code> is just an HTTP client — it has no JS engine, so the challenge sits unread.</li>
+      <li>Our script saw 344 KB of HTML titled <em>"Challenge - Upwork"</em> and zero job data. From Cloudflare's perspective, the request was never trusted enough to be forwarded to Upwork's origin servers.</li>
+    </ol>
+  </section>
+
+  <section class="section">
+    <h2>4. What this means for the build</h2>
+    <div class="callout">
+      <strong>Any scraping approach that lacks a JavaScript runtime will fail at step 4.</strong> That includes <code>requests</code>, <code>httpx</code>, <code>curl_cffi</code>, and any pure-HTTP library — regardless of how convincingly they impersonate Chrome's TLS or headers.
+    </div>
+    <p style="margin-top: 16px; color: var(--muted); font-size: 15px;">The two real options are:</p>
+    <ul class="clean">
+      <li><strong>Headless browser (Playwright + Chromium)</strong> — has a real JS engine, solves the challenge automatically, but adds ~200&nbsp;MB of browser binaries and 5–10&nbsp;s per page load.</li>
+      <li><strong>Reuse an existing authenticated session</strong> — paste a logged-in user's <code>cf_clearance</code> and session cookies into the script. Bypasses the challenge entirely. Risks the account if Upwork detects scraping.</li>
+    </ul>
+  </section>
+
+  <footer>
+    Anak Wannaphaschaiyong · diagnostic · <a href="index.html">profile</a>
+  </footer>
+
+</main>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      darkMode: true,
+      background: '#14171c',
+      primaryColor: '#1c2026',
+      primaryTextColor: '#e8eaed',
+      primaryBorderColor: '#2a2f37',
+      lineColor: '#5eead4',
+      secondaryColor: '#1c2026',
+      tertiaryColor: '#0b0d10',
+      actorBkg: '#1c2026',
+      actorBorder: '#5eead4',
+      actorTextColor: '#e8eaed',
+      actorLineColor: '#5eead4',
+      signalColor: '#9aa3ad',
+      signalTextColor: '#e8eaed',
+      labelBoxBkgColor: '#1c2026',
+      labelBoxBorderColor: '#2a2f37',
+      labelTextColor: '#e8eaed',
+      noteBkgColor: '#0b0d10',
+      noteBorderColor: '#2dd4bf',
+      noteTextColor: '#e8eaed'
+    },
+    sequence: {
+      diagramMarginX: 20,
+      diagramMarginY: 20,
+      boxMargin: 10,
+      noteFontSize: 13,
+      messageFontSize: 13,
+      actorFontSize: 14
+    }
+  });
+</script>
+
+</body>
+</html>
