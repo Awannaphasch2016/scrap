@@ -1,0 +1,476 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+// curator/<topic> view · queries the shared Supabase project (knowledgebase),
+// schema "curator". Publishable key is RLS-gated to SELECT on
+// curator.{sources,items} (open-read). PUBLIC_SUPABASE_URL +
+// PUBLIC_SUPABASE_PUBLISHABLE_KEY are inlined at build via
+//   doppler run --project scrape --config dev -- npm run build
+---
+
+<BaseLayout title="Curator · Anak" description="Daily-curated topics — scraping news, job leads, scored against my skill profile.">
+  <section class="curator">
+    <aside class="topics">
+      <h2>Topics</h2>
+      <ul id="topic-list">
+        <li class="topic-placeholder">loading…</li>
+      </ul>
+      <div class="topic-controls">
+        <label class="toggle">
+          <input type="checkbox" id="sort-relevance" />
+          <span>Sort by relevance score</span>
+        </label>
+        <div class="window-info" id="window-info"></div>
+      </div>
+    </aside>
+
+    <main class="items" id="items-pane">
+      <div class="items-header" id="items-header">
+        <h2 id="items-title">All topics · today</h2>
+        <div class="items-meta" id="items-meta"></div>
+      </div>
+      <div id="items-list">
+        <div class="loading">loading items…</div>
+      </div>
+    </main>
+  </section>
+</BaseLayout>
+
+<style>
+  .curator {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 1.5rem;
+    min-height: calc(100vh - 220px);
+  }
+
+  /* Sidebar */
+  .topics {
+    border-right: 1px solid var(--border);
+    padding-right: 1rem;
+  }
+  .topics h2 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--fg-muted);
+    margin: 0 0 0.7rem;
+  }
+  .topics ul {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .topics li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.45rem 0.7rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 0.88rem;
+    color: var(--fg);
+  }
+  .topics li:hover { background: var(--bg-elev); }
+  .topics li.active {
+    background: var(--bg-elev);
+    border-left: 3px solid var(--accent);
+    padding-left: calc(0.7rem - 3px);
+  }
+  .topics li.topic-placeholder {
+    color: var(--fg-muted);
+    font-style: italic;
+    cursor: default;
+  }
+  .topics li.topic-placeholder:hover { background: transparent; }
+  .topics .count {
+    font-size: 0.74rem;
+    color: var(--fg-muted);
+    background: var(--bg-elev);
+    border-radius: 999px;
+    padding: 0.1rem 0.5rem;
+    min-width: 1.5rem;
+    text-align: center;
+  }
+  .topics li.active .count {
+    background: var(--accent);
+    color: var(--bg);
+  }
+  .topic-controls {
+    border-top: 1px solid var(--border);
+    padding-top: 0.9rem;
+    font-size: 0.82rem;
+    color: var(--fg-muted);
+  }
+  .toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    user-select: none;
+  }
+  .window-info {
+    margin-top: 0.6rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+  }
+
+  /* Main pane */
+  .items-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .items-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+  }
+  .items-meta {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--fg-muted);
+  }
+  .loading, .empty {
+    color: var(--fg-muted);
+    font-style: italic;
+    padding: 1rem 0;
+  }
+  .item {
+    border-left: 3px solid var(--border);
+    padding: 0.7rem 0.9rem;
+    margin: 0.7rem 0;
+    background: var(--bg-elev);
+    border-radius: 4px;
+  }
+  .item.hi { border-left-color: #2ecc71; }
+  .item.mid { border-left-color: #f1c40f; }
+  .item-title {
+    font-weight: 500;
+    margin: 0 0 0.25rem;
+    line-height: 1.4;
+  }
+  .item-title a {
+    color: var(--fg);
+    text-decoration: none;
+  }
+  .item-title a:hover { text-decoration: underline; color: var(--accent); }
+  .item-meta {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--fg-muted);
+    margin: 0.2rem 0;
+  }
+  .item-meta .score {
+    color: #2ecc71;
+    font-weight: 600;
+    margin-right: 0.4rem;
+  }
+  .item-meta .topic-tag {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0 0.4rem;
+    margin-right: 0.5rem;
+    color: var(--fg);
+  }
+  .item-tags {
+    margin-top: 0.3rem;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--accent);
+  }
+  .item-body {
+    margin-top: 0.5rem;
+    font-size: 0.88rem;
+    color: var(--fg-muted);
+    max-height: 5.5em;
+    overflow: hidden;
+    position: relative;
+  }
+  .item-body::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 1.5em;
+    background: linear-gradient(transparent, var(--bg-elev));
+    pointer-events: none;
+  }
+  .item.expanded .item-body {
+    max-height: none;
+  }
+  .item.expanded .item-body::after { display: none; }
+  .item-toggle {
+    margin-top: 0.5rem;
+    font-size: 0.72rem;
+    color: var(--fg-muted);
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: var(--mono);
+  }
+  .item-toggle:hover { color: var(--accent); }
+
+  @media (max-width: 720px) {
+    .curator {
+      grid-template-columns: 1fr;
+    }
+    .topics {
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+      padding-right: 0;
+      padding-bottom: 1rem;
+    }
+  }
+</style>
+
+<script>
+  import { makeSupabase } from '../lib/supabase';
+
+  type Item = {
+    topic: string;
+    id: string;
+    source_id: string;
+    type: string;
+    title: string | null;
+    url: string | null;
+    author: string | null;
+    content: string | null;
+    published_at: string | null;
+    fetched_at: string;
+    relevance: number | null;
+    metadata: Record<string, unknown> | null;
+  };
+
+  type Source = { topic: string; id: string; name: string; type: string; url: string | null };
+
+  const WINDOW_HOURS = 36;
+
+  const supabase = makeSupabase();
+
+  const topicListEl = document.getElementById('topic-list')!;
+  const itemsListEl = document.getElementById('items-list')!;
+  const itemsTitleEl = document.getElementById('items-title')!;
+  const itemsMetaEl = document.getElementById('items-meta')!;
+  const windowInfoEl = document.getElementById('window-info')!;
+  const sortRelevanceEl = document.getElementById('sort-relevance') as HTMLInputElement;
+
+  // Deep-link · `curator open <topic>` opens /?topic=<topic> so the sidebar
+  // lands on the right pane. Read once at module init; the rest of the
+  // page treats activeTopic as the source of truth.
+  const _initialTopic = new URLSearchParams(window.location.search).get('topic');
+  let activeTopic: string | null = _initialTopic && _initialTopic.length > 0
+    ? _initialTopic
+    : null;
+  let sortByRelevance = false;
+  let allItems: Item[] = [];
+  let sourcesByKey: Map<string, Source> = new Map();
+
+  windowInfoEl.textContent = `window: last ${WINDOW_HOURS}h`;
+
+  function escape(s: string): string {
+    return s.replace(/[&<>"']/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c] as string),
+    );
+  }
+
+  function humanAge(iso: string | null, nowMs: number): string {
+    if (!iso) return '';
+    const t = Date.parse(iso);
+    if (!t) return '';
+    const delta = Math.max(0, (nowMs - t) / 1000);
+    if (delta < 3600) return `${Math.round(delta / 60)}m ago`;
+    if (delta < 86400) return `${Math.round(delta / 3600)}h ago`;
+    return `${Math.round(delta / 86400)}d ago`;
+  }
+
+  function sourceName(item: Item): string {
+    const src = sourcesByKey.get(`${item.topic}:${item.source_id}`);
+    return src?.name ?? item.source_id;
+  }
+
+  function renderItem(item: Item, nowMs: number): HTMLElement {
+    const el = document.createElement('article');
+    const score = item.relevance ?? 0;
+    const cls = score >= 6 ? 'item hi' : score >= 3 ? 'item mid' : 'item';
+    el.className = cls;
+
+    const title = item.title || '(untitled)';
+    const url = item.url || '';
+    const titleHTML = url
+      ? `<a href="${escape(url)}" target="_blank" rel="noopener">${escape(title)}</a>`
+      : escape(title);
+
+    const meta: string[] = [];
+    if (item.relevance != null) meta.push(`<span class="score">${item.relevance.toFixed(1)}</span>`);
+    meta.push(`<span class="topic-tag">${escape(item.topic)}</span>`);
+    meta.push(escape(sourceName(item)));
+    meta.push(humanAge(item.published_at, nowMs));
+    if (item.author) meta.push(`by ${escape(item.author)}`);
+
+    const md = (item.metadata ?? {}) as Record<string, unknown>;
+    const tags = Array.isArray(md.tags) ? (md.tags as string[]).slice(0, 6) : [];
+    const tagsHTML = tags.length > 0
+      ? `<div class="item-tags">${tags.map((t) => escape(t)).join(' · ')}</div>`
+      : '';
+
+    const body = (item.content ?? '').trim();
+    const bodyHTML = body
+      ? `<div class="item-body">${escape(body.slice(0, 600))}</div>
+         <button class="item-toggle" type="button" data-action="toggle">expand ▾</button>`
+      : '';
+
+    el.innerHTML = `
+      <h3 class="item-title">${titleHTML}</h3>
+      <div class="item-meta">${meta.join(' · ')}</div>
+      ${tagsHTML}
+      ${bodyHTML}
+    `;
+
+    el.querySelector<HTMLButtonElement>('[data-action="toggle"]')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      el.classList.toggle('expanded');
+      const btn = e.currentTarget as HTMLButtonElement;
+      btn.textContent = el.classList.contains('expanded') ? 'collapse ▴' : 'expand ▾';
+    });
+
+    return el;
+  }
+
+  function visibleItems(): Item[] {
+    const filtered = activeTopic == null
+      ? allItems
+      : allItems.filter((i) => i.topic === activeTopic);
+    if (sortByRelevance) {
+      return [...filtered].sort((a, b) => (b.relevance ?? -Infinity) - (a.relevance ?? -Infinity));
+    }
+    return [...filtered].sort((a, b) => {
+      const ta = a.published_at ? Date.parse(a.published_at) : 0;
+      const tb = b.published_at ? Date.parse(b.published_at) : 0;
+      return tb - ta;
+    });
+  }
+
+  function render() {
+    const nowMs = Date.now();
+    const items = visibleItems();
+    itemsListEl.innerHTML = '';
+    if (items.length === 0) {
+      itemsListEl.innerHTML = '<div class="empty">no items in this window</div>';
+    } else {
+      for (const item of items) {
+        itemsListEl.appendChild(renderItem(item, nowMs));
+      }
+    }
+    itemsTitleEl.textContent = activeTopic
+      ? `${activeTopic} · last ${WINDOW_HOURS}h`
+      : `All topics · last ${WINDOW_HOURS}h`;
+    itemsMetaEl.textContent = `${items.length} item${items.length === 1 ? '' : 's'} · sorted by ${sortByRelevance ? 'relevance' : 'time'}`;
+  }
+
+  function renderSidebar() {
+    const counts: Map<string, number> = new Map();
+    for (const item of allItems) counts.set(item.topic, (counts.get(item.topic) ?? 0) + 1);
+    const topics = [...counts.keys()].sort();
+
+    topicListEl.innerHTML = '';
+    const allLi = document.createElement('li');
+    allLi.className = activeTopic == null ? 'active' : '';
+    allLi.dataset.topic = '';
+    allLi.innerHTML = `<span>all</span><span class="count">${allItems.length}</span>`;
+    topicListEl.appendChild(allLi);
+
+    for (const topic of topics) {
+      const li = document.createElement('li');
+      li.className = topic === activeTopic ? 'active' : '';
+      li.dataset.topic = topic;
+      li.innerHTML = `<span>${escape(topic)}</span><span class="count">${counts.get(topic)}</span>`;
+      topicListEl.appendChild(li);
+    }
+
+    topicListEl.querySelectorAll<HTMLLIElement>('li[data-topic]').forEach((li) => {
+      li.addEventListener('click', () => {
+        const t = li.dataset.topic || '';
+        activeTopic = t === '' ? null : t;
+        renderSidebar();
+        render();
+      });
+    });
+  }
+
+  async function loadOnce(): Promise<void> {
+    const cutoffMs = Date.now() - WINDOW_HOURS * 3600 * 1000;
+    const cutoffIso = new Date(cutoffMs).toISOString();
+
+    const [{ data: items, error: e1 }, { data: sources, error: e2 }] = await Promise.all([
+      supabase.from('items').select('*').gte('published_at', cutoffIso).order('published_at', { ascending: false }),
+      supabase.from('sources').select('*'),
+    ]);
+
+    if (e1) {
+      itemsListEl.innerHTML = `<div class="empty">load error: ${escape(e1.message)}</div>`;
+      return;
+    }
+    if (e2) {
+      console.warn('sources load error', e2);
+    }
+    allItems = (items as Item[]) ?? [];
+    sourcesByKey = new Map(((sources as Source[]) ?? []).map((s) => [`${s.topic}:${s.id}`, s]));
+
+    renderSidebar();
+    render();
+  }
+
+  function subscribeRealtime(): void {
+    const channel = supabase
+      .channel('curator-items-stream')
+      .on(
+        // @ts-expect-error · supabase-js typing for postgres_changes is loose
+        'postgres_changes',
+        { event: 'INSERT', schema: 'curator', table: 'items' },
+        (payload: { new: Item }) => {
+          const incoming = payload.new;
+          const idx = allItems.findIndex((i) => i.id === incoming.id && i.topic === incoming.topic);
+          if (idx >= 0) {
+            allItems[idx] = incoming;
+          } else {
+            allItems.unshift(incoming);
+          }
+          renderSidebar();
+          render();
+        },
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('[curator] realtime subscribed');
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[curator] realtime status:', status);
+        }
+      });
+
+    window.addEventListener('beforeunload', () => {
+      supabase.removeChannel(channel);
+    });
+  }
+
+  sortRelevanceEl.addEventListener('change', () => {
+    sortByRelevance = sortRelevanceEl.checked;
+    render();
+  });
+
+  loadOnce()
+    .then(() => subscribeRealtime())
+    .catch((err) => {
+      itemsListEl.innerHTML = `<div class="empty">init error: ${escape(String(err?.message ?? err))}</div>`;
+      console.error(err);
+    });
+</script>
