@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Curator · claude -p PoC — throwaway demo, no integration</title>
+<link rel="stylesheet" href="../diagrams/viewer/diagram-viewer.css">
+<style>
+  :root {
+    --surface: #14171c;
+    --surface-2: #1c2026;
+    --surface-3: #232830;
+    --text: #e8eaed;
+    --muted: #9aa3ad;
+    --border: #2a2f37;
+    --accent: #5eead4;
+    --accent-warm: #fbbf24;
+    --accent-cool: #8fd0ff;
+    --good: #2ecc71;
+    --bad: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0 24px 64px;
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--text);
+    background: var(--surface);
+    max-width: 1100px;
+    margin-inline: auto;
+  }
+  h1 { font-size: 1.7rem; margin: 1.4rem 0 0.5rem; }
+  h1 .sub { color: var(--muted); font-size: 0.7em; font-weight: normal; display: block; margin-top: 0.25rem; }
+  h2 { font-size: 1.25rem; margin-top: 2.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h3 { font-size: 1.05rem; margin-top: 1.6rem; color: var(--accent); }
+  p { margin: 0.5rem 0 0.9rem; }
+  .lead { color: var(--muted); font-size: 0.95rem; margin-bottom: 1.2rem; }
+  code { background: var(--surface-2); padding: 2px 6px; border-radius: 3px; color: var(--accent); font-size: 0.92em; }
+  a { color: var(--accent); }
+  ul { margin: 0.4rem 0 0.9rem; }
+  li { margin: 0.15rem 0; }
+
+  pre.mermaid {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem;
+    margin: 16px 0 24px;
+  }
+  .diagram-source {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin: -16px 0 22px;
+    font-style: italic;
+  }
+
+  pre.code {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre;
+  }
+  pre.code .c { color: var(--muted); }
+  pre.code .k { color: var(--accent-cool); }
+  pre.code .s { color: var(--accent-warm); }
+
+  .callout {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent-warm);
+    border-radius: 4px;
+    padding: 12px 18px;
+    margin: 14px 0 22px;
+    font-size: 0.95rem;
+  }
+  .callout strong { color: var(--accent-warm); }
+  .callout.good { border-left-color: var(--good); } .callout.good strong { color: var(--good); }
+  .callout.bad  { border-left-color: var(--bad);  } .callout.bad  strong { color: var(--bad); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .punchline {
+    font-size: 1.05rem;
+    color: var(--text);
+    background: linear-gradient(90deg, rgba(94, 234, 212, 0.08), transparent);
+    border-left: 4px solid var(--accent);
+    padding: 14px 18px;
+    margin: 18px 0 26px;
+    border-radius: 0 4px 4px 0;
+  }
+  .punchline strong { color: var(--accent); }
+
+  table.kv {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0 24px;
+    font-size: 0.92rem;
+  }
+  table.kv th, table.kv td {
+    text-align: left;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    vertical-align: top;
+  }
+  table.kv th {
+    background: var(--surface-2);
+    font-weight: 600;
+    font-size: 0.83rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  table.kv td.in  { color: var(--good); }
+  table.kv td.out { color: var(--bad); }
+
+  .nav { font-size: 0.85rem; color: var(--muted); margin: 1.4rem 0 0; }
+  .nav a { color: var(--accent); text-decoration: none; border-bottom: 1px dashed transparent; }
+  .nav a:hover { border-bottom-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<p class="nav">
+  <a href="index.html">← docs index</a> ·
+  related (deferred): <a href="curator-llm-ranking.html">full integration design (rescore.py + blast radius)</a>
+</p>
+
+<h1>
+  claude -p relevance scorer · PoC
+  <span class="sub">throwaway demo · ~60 lines · no DB, no infra change, no integration</span>
+</h1>
+
+<p class="lead">
+  Goal: prove the LLM scoring idea works <em>in isolation</em> before designing
+  the integration. A single Python file with hand-coded inputs, shells out to
+  <code>claude -p</code>, prints the result. Run it three times, eyeball whether
+  the scores are sensible and how much they vary. <strong>That answer decides
+  whether we build the integration at all.</strong>
+</p>
+
+<div class="punchline">
+  <strong>One-sentence model:</strong>
+  <code>experiments/llm_scorer_poc.py</code> embeds a profile paragraph + 2-3 real
+  job listings, builds one prompt per item, spawns <code>claude -p</code>, parses
+  <code>{score, reason}</code> JSON, prints to stdout. Nothing else.
+</div>
+
+<h2>What this is (and isn't)</h2>
+
+<table class="kv">
+  <thead><tr><th>Aspect</th><th>This PoC</th><th>Full integration (deferred)</th></tr></thead>
+  <tbody>
+    <tr><td>Where it runs</td><td class="in">Manual <code>python3 experiments/llm_scorer_poc.py</code></td><td class="out">cron / scheduled driver</td></tr>
+    <tr><td>Inputs</td><td class="in">Hard-coded profile + items in the script</td><td class="out">Profile file + items via PostgREST GET</td></tr>
+    <tr><td>Outputs</td><td class="in"><code>print()</code> to stdout</td><td class="out">PATCH <code>relevance</code> + <code>metadata.llm_reason</code> via PostgREST</td></tr>
+    <tr><td>Touches Supabase</td><td class="in">No</td><td class="out">Yes (reads pending, writes scores)</td></tr>
+    <tr><td>Touches Lambda</td><td class="in">No</td><td class="out">No (Lambda still ingests; rescore overwrites)</td></tr>
+    <tr><td>Touches the UI</td><td class="in">No</td><td class="out">Indirectly (sort distribution shifts)</td></tr>
+    <tr><td>Reversibility</td><td class="in"><code>rm experiments/llm_scorer_poc.py</code></td><td class="out">Multi-file revert, redeploy</td></tr>
+    <tr><td>What it tells you</td><td class="in">Does the idea work?</td><td class="out">Does the integration work?</td></tr>
+  </tbody>
+</table>
+
+<h2>The file</h2>
+
+<pre class="code"><span class="c"># experiments/llm_scorer_poc.py · throwaway</span>
+<span class="k">import</span> subprocess, json, sys
+
+PROFILE = <span class="s">"""
+Anak is a freelance AI / automation engineer based in Bangkok.
+Builds: LLM agents, web scrapers, MCP servers, marketing automation,
+Telegram / Discord bots, Astro / Next.js frontends, AWS Lambda backends.
+Stack: Python, TypeScript, AWS, Supabase, Pulumi. Comfortable with
+Anthropic Claude API + Claude Code CLI as primary LLM tooling.
+Prefers remote, contract or project-scoped work (~2-6 weeks). Refuses
+on-site, US-only, full-time-employment-only postings.
+"""</span>.strip()
+
+ITEMS = [
+    {
+        <span class="s">"title"</span>:  <span class="s">"Senior Python Engineer · LLM Infrastructure · Remote"</span>,
+        <span class="s">"author"</span>: <span class="s">"Vercel"</span>,
+        <span class="s">"content"</span>: <span class="s">"We're building the AI SDK infra. Python 3.12, FastAPI, "</span>
+                   <span class="s">"Postgres + pgvector, AWS Lambda + Bedrock. Remote OK."</span>,
+    },
+    {
+        <span class="s">"title"</span>:  <span class="s">"[Hiring] WordPress site cleanup, ~$300"</span>,
+        <span class="s">"author"</span>: <span class="s">"lazyowner"</span>,
+        <span class="s">"content"</span>: <span class="s">"Old WP site, plugin mess, need someone to audit + clean."</span>,
+    },
+]
+
+RUBRIC = <span class="s">"""
+Score 0 to 10 for fit:
+  0-2  not a fit (wrong stack, deal-breakers like on-site)
+  3-5  adjacent · could plausibly take but not obvious
+  6-8  solid fit · profile matches multiple aspects
+  9-10 exceptional · ideal client / role / scope
+Return ONLY: {"score": &lt;float&gt;, "reason": "&lt;one sentence&gt;"}
+"""</span>.strip()
+
+<span class="k">def</span> score(item):
+    prompt = <span class="s">f"PROFILE\n=======\n{PROFILE}\n\nJOB\n===\n"</span> \
+             <span class="s">f"Title: {item['title']}\nAuthor: {item['author']}\n\n"</span> \
+             <span class="s">f"{item['content']}\n\n{RUBRIC}"</span>
+    r = subprocess.run(
+        [<span class="s">"claude"</span>, <span class="s">"-p"</span>, prompt],
+        capture_output=<span class="k">True</span>, text=<span class="k">True</span>, timeout=<span class="k">60</span>,
+    )
+    <span class="k">if</span> r.returncode != <span class="k">0</span>:
+        <span class="k">return</span> {<span class="s">"error"</span>: <span class="s">f"claude exit {r.returncode}: {r.stderr[:200]}"</span>}
+    <span class="k">try</span>:
+        <span class="k">return</span> json.loads(r.stdout.strip())
+    <span class="k">except</span> json.JSONDecodeError <span class="k">as</span> e:
+        <span class="k">return</span> {<span class="s">"error"</span>: <span class="s">f"bad JSON: {e}"</span>, <span class="s">"raw"</span>: r.stdout[:200]}
+
+<span class="k">for</span> item <span class="k">in</span> ITEMS:
+    print(<span class="s">f"\n=== {item['title'][:60]} ==="</span>)
+    print(json.dumps(score(item), indent=<span class="k">2</span>))</pre>
+
+<h2>Sequence — one PoC run</h2>
+
+<p>
+  Operator runs the script; for each hard-coded item the script renders a prompt,
+  spawns <code>claude -p</code>, captures stdout, parses JSON, prints. No I/O
+  outside stdout. The "Claude API" is implicit — the CLI handles HTTPS internally;
+  from our side it's a subprocess that returns text.
+</p>
+
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Op as Operator<br/>(you · terminal)
+    participant PoC as llm_scorer_poc.py<br/>(throwaway script)
+    participant CLI as claude -p<br/>(subprocess)
+    participant Claude as Claude<br/>(cloud · via CLI auth)
+
+    Op->>PoC: python3 experiments/llm_scorer_poc.py
+
+    Note over PoC: PROFILE, ITEMS, RUBRIC<br/>all hard-coded in the script
+
+    loop for each item in ITEMS (hard-coded, 2-3 of them)
+        PoC->>PoC: prompt = template(PROFILE, item, RUBRIC)
+        PoC->>CLI: subprocess.run(["claude","-p",prompt])
+        CLI->>Claude: HTTPS (handled internally · subscription auth)
+        Claude-->>CLI: response text
+        CLI-->>PoC: stdout · expected JSON
+        alt JSON parses
+            PoC->>PoC: parsed = json.loads(stdout)
+            PoC-->>Op: print({"score": N, "reason": "..."})
+        else malformed or CLI nonzero exit
+            PoC->>PoC: capture error + raw stdout
+            PoC-->>Op: print({"error": "...", "raw": "..."})
+        end
+    end
+
+    Note over Op,Claude: No DB · no Supabase · no Lambda · no cron · no UI<br/>The PoC's only output is what gets printed in your terminal.
+    Note over Op,PoC: Run it 3 times back-to-back on the same items<br/>to see how stable the scores are across runs.
+</pre>
+<p class="diagram-source">Sequence diagram · Mermaid · inline.</p>
+
+<h2>What we learn from running it</h2>
+
+<ul>
+  <li>
+    <strong>Does <code>claude -p</code> return parseable JSON?</strong>
+    Or does it wrap the output in <code>```json … ```</code> fences, add prose
+    commentary, or both? If yes → either tighten the prompt ("return ONLY the
+    JSON object, no markdown fences, no other text") or strip fences in the
+    parser.
+  </li>
+  <li>
+    <strong>Are the scores roughly ordered correctly?</strong>
+    The Vercel listing should score high (Python + LLM infra + remote, all
+    bullseye); the WordPress cleanup should score low (off-stack, micro-scope,
+    no AI angle). If the ranking is upside-down, the prompt or the profile
+    needs work, not the integration.
+  </li>
+  <li>
+    <strong>How much do scores vary across runs?</strong>
+    Run it three times on the same items. If the same job gets 8.2 / 7.9 / 8.1 →
+    fine, ship it. If 8 / 3 / 9 → we need temperature control, JSON Schema
+    output, or multi-sample averaging before this is usable.
+  </li>
+  <li>
+    <strong>How long does one call take?</strong>
+    CLI startup + Claude response. If &lt; 10 s, on-laptop nightly is comfortable.
+    If &gt; 30 s × 30 items = 15 min → still fine for daily, painful for ad-hoc.
+  </li>
+</ul>
+
+<h2>How to run</h2>
+
+<pre class="code">cd ~/dev/scrap
+python3 experiments/llm_scorer_poc.py
+
+<span class="c"># run it 3 times to eyeball variance:</span>
+<span class="k">for</span> i in 1 2 3; <span class="k">do</span> python3 experiments/llm_scorer_poc.py; echo; <span class="k">done</span></pre>
+
+<h2>Decision gate · what gets built next</h2>
+
+<div class="callout good">
+  <strong>If the PoC looks good</strong> (JSON parses, ordering sensible,
+  variance acceptable) → revisit the
+  <a href="curator-llm-ranking.html">full integration design</a> — write
+  <code>rescore.py</code>, wire it to PostgREST, decide on schedule. The
+  blast-radius diagram on that page becomes load-bearing.
+</div>
+
+<div class="callout bad">
+  <strong>If the PoC looks bad</strong> (malformed output, wrong ordering, wild
+  variance) → don't integrate yet. Iterate on the prompt, or add structured-output
+  enforcement (JSON Schema, temperature pinning), or admit the model isn't a fit
+  for this task and stick with the regex scorer.
+</div>
+
+<h2>How to view this page</h2>
+
+<pre class="code">cd ~/dev/scrap
+python3 -m http.server 8765 --directory ~/dev/scrap --bind 127.0.0.1
+<span class="c"># http://localhost:8765/docs/curator-llm-poc.html</span></pre>
+
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js"></script>
+<script src="../diagrams/viewer/diagram-viewer.js" defer></script>
+
+</body>
+</html>

@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Curator · LLM-based ranking via claude -p — supply / demand sequence</title>
+<link rel="stylesheet" href="../diagrams/viewer/diagram-viewer.css">
+<style>
+  :root {
+    --surface: #14171c;
+    --surface-2: #1c2026;
+    --surface-3: #232830;
+    --text: #e8eaed;
+    --muted: #9aa3ad;
+    --border: #2a2f37;
+    --accent: #5eead4;
+    --accent-warm: #fbbf24;
+    --accent-cool: #8fd0ff;
+    --good: #2ecc71;
+    --bad: #ef4444;
+    --supply: #8fd0ff;
+    --demand: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0 24px 64px;
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--text);
+    background: var(--surface);
+    max-width: 1100px;
+    margin-inline: auto;
+  }
+  h1 { font-size: 1.7rem; margin: 1.4rem 0 0.5rem; }
+  h1 .sub { color: var(--muted); font-size: 0.7em; font-weight: normal; display: block; margin-top: 0.25rem; }
+  h2 { font-size: 1.25rem; margin-top: 2.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h3 { font-size: 1.05rem; margin-top: 1.6rem; color: var(--accent); }
+  p { margin: 0.5rem 0 0.9rem; }
+  .lead { color: var(--muted); font-size: 0.95rem; margin-bottom: 1.2rem; }
+  code { background: var(--surface-2); padding: 2px 6px; border-radius: 3px; color: var(--accent); font-size: 0.92em; }
+  a { color: var(--accent); }
+  ul { margin: 0.4rem 0 0.9rem; }
+  li { margin: 0.15rem 0; }
+
+  pre.mermaid {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem;
+    margin: 16px 0 24px;
+  }
+  .diagram-source {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin: -16px 0 22px;
+    font-style: italic;
+  }
+
+  pre.code {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre;
+  }
+  pre.code .c { color: var(--muted); }
+  pre.code .k { color: var(--accent-cool); }
+  pre.code .s { color: var(--accent-warm); }
+
+  table.kv {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0 24px;
+    font-size: 0.92rem;
+  }
+  table.kv th, table.kv td {
+    text-align: left;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    vertical-align: top;
+  }
+  table.kv th {
+    background: var(--surface-2);
+    font-weight: 600;
+    font-size: 0.83rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  table.kv td.old { color: var(--muted); }
+  table.kv td.new { color: var(--good); }
+
+  .callout {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent-warm);
+    border-radius: 4px;
+    padding: 12px 18px;
+    margin: 14px 0 22px;
+    font-size: 0.95rem;
+  }
+  .callout strong { color: var(--accent-warm); }
+  .callout.good   { border-left-color: var(--good);   } .callout.good   strong { color: var(--good); }
+  .callout.bad    { border-left-color: var(--bad);    } .callout.bad    strong { color: var(--bad); }
+  .callout.supply { border-left-color: var(--supply); } .callout.supply strong { color: var(--supply); }
+  .callout.demand { border-left-color: var(--demand); } .callout.demand strong { color: var(--demand); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .punchline {
+    font-size: 1.05rem;
+    color: var(--text);
+    background: linear-gradient(90deg, rgba(94, 234, 212, 0.08), transparent);
+    border-left: 4px solid var(--accent);
+    padding: 14px 18px;
+    margin: 18px 0 26px;
+    border-radius: 0 4px 4px 0;
+  }
+  .punchline strong { color: var(--accent); }
+
+  .nav { font-size: 0.85rem; color: var(--muted); margin: 1.4rem 0 0; }
+  .nav a { color: var(--accent); text-decoration: none; border-bottom: 1px dashed transparent; }
+  .nav a:hover { border-bottom-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<p class="nav">
+  <a href="index.html">← docs index</a> ·
+  prior: <a href="curator-relevance-scoring.html">regex-based relevance (current)</a>
+</p>
+
+<h1>
+  Rank via <code>claude -p</code>
+  <span class="sub">LLM scoring · supply (profile) meets demand (jobs) · sequence-diagram view</span>
+</h1>
+
+<p class="lead">
+  This is the v0 of swapping the regex-based <code>score_item</code> for an LLM
+  judgment. The two scorers are <strong>alternatives</strong>, not a hybrid — once
+  the LLM scorer is trusted, the regex one goes away.
+</p>
+
+<div class="punchline">
+  <strong>One-sentence model:</strong>
+  a driver script (running on the laptop on a schedule) reads each item from the DB,
+  builds a prompt that combines your <em>profile paragraph</em> (supply) with the
+  item's <em>title + content</em> (demand), shells out to <code>claude -p</code>
+  for a JSON-shaped <code>{score, reason}</code> verdict, and writes the result back
+  to <code>curator.items.relevance</code> (plus <code>metadata.llm_reason</code> for audit).
+</div>
+
+<h2>The two inputs</h2>
+
+<div class="callout supply">
+  <strong>SUPPLY · your profile (prose, not a dict)</strong>
+  <p>
+    A hand-authored paragraph at <code>curator/topics/jobs_profile.md</code> (new file).
+    Replaces <code>SKILL_WEIGHTS</code>. Roughly: who you are, what you build, what stack,
+    what you charge, what you refuse (e.g. on-site, US-only). The LLM reads this once per
+    invocation as the standard of comparison.
+  </p>
+  <p>
+    "Tune the scorer" no longer means bumping numbers in code — it means editing this paragraph.
+    Different ergonomics, but it can capture nuances the dict can't (e.g. "prefer agency work over
+    direct-to-founder, prefer 2-6 week scopes over 6-month full-time").
+  </p>
+</div>
+
+<div class="callout demand">
+  <strong>DEMAND · job items already in the DB</strong>
+  <p>
+    Unchanged from today. The Lambda pipeline still fetches Reddit/HN/RemoteOK/etc. and
+    upserts items into <code>curator.items</code>. What changes is what fills the
+    <code>relevance</code> column afterwards.
+  </p>
+</div>
+
+<h2>Where it runs (v0)</h2>
+
+<p>
+  <strong>On the laptop, manual or cron — not in the scraper Lambda.</strong>
+  Three reasons:
+</p>
+<ul>
+  <li><code>claude</code> CLI is already authenticated locally (your Anthropic subscription); auth-in-Lambda would need either an API key (different billing) or pre-warmed credential plumbing.</li>
+  <li>~30 items/day takes ~5 minutes wall-clock; on-laptop is fast enough and easy to inspect.</li>
+  <li>Decouples the experiment from the production scraper — if the LLM scorer behaves badly, the Lambda + UI are unaffected.</li>
+</ul>
+
+<h2>The prompt (template)</h2>
+
+<pre class="code"><span class="c"># sent on stdin to: claude -p</span>
+You are evaluating job listings for fit against a freelancer's profile.
+
+PROFILE
+=======
+{profile_paragraph}
+
+JOB LISTING
+===========
+Title:  {item.title}
+Source: {item.source_name}
+Author: {item.author}
+
+{item.content}
+
+INSTRUCTIONS
+============
+Score this listing from 0 to 10 for fit, where:
+- 0-2  = clearly not a fit (wrong stack, on-site only, US-only, etc.)
+- 3-5  = adjacent · could plausibly take it but not the obvious choice
+- 6-8  = solid fit · profile matches multiple aspects
+- 9-10 = exceptional match · ideal client / role / scope
+
+Return ONLY a JSON object, no markdown fences, no prose:
+{"score": &lt;float 0-10&gt;, "reason": "&lt;one sentence justifying the score&gt;"}</pre>
+
+<h2>Blast radius (L2 Container)</h2>
+
+<p>
+  What this plan actually touches — new boxes in red, modified in pink,
+  indirectly-affected (no local code change but behavior shifts) in orange,
+  and unchanged context in blue. Dashed red edges are <em>change-impact</em>
+  paths; solid gray edges are existing static structure shown for context.
+</p>
+
+<div class="diagram-host" data-src="../diagrams/rendered/C4_Container_LLMRanking_BlastRadius.svg">
+  <noscript><img src="../diagrams/rendered/C4_Container_LLMRanking_BlastRadius.svg" alt="L2 Container blast-radius for the claude -p relevance scorer plan" /></noscript>
+</div>
+<p class="diagram-source">
+  C4-PlantUML · L2 Container with blast-radius overlay · source:
+  <code>diagrams/c4_container_llm_ranking_blast_radius.puml</code> ·
+  render via <code>./scripts/render-diagrams.sh</code>.
+</p>
+
+<p>
+  Things to notice:
+</p>
+<ul>
+  <li>
+    <strong>Four new containers on the laptop</strong>: <code>rescore.py</code> driver,
+    <code>jobs_profile.md</code> (the supply paragraph), the <code>claude -p</code>
+    subprocess, and the cron/manual trigger. Everything inside the Laptop boundary that's red is genuinely new.
+  </li>
+  <li>
+    <strong>The Lambda is untouched</strong> (blue) — its regex <code>score_item</code>
+    keeps running. That output just gets overwritten downstream. Lambda doesn't
+    even know the LLM scorer exists.
+  </li>
+  <li>
+    <strong>The <code>relevance</code> column is the seam</strong> (orange) — schema unchanged,
+    but its meaning inverts from "sum of regex keyword hits" to "LLM 0-10 judgment."
+    Anyone reading that column gets the new semantics whether they expected it or not.
+  </li>
+  <li>
+    <strong>The UI is indirectly affected</strong> (orange) — no code change ships to
+    Vercel, but the "sort by relevance" toggle now ranks against LLM output, so
+    the newsfeed top-15 will look different the day this lands.
+  </li>
+  <li>
+    <strong>One new external dependency</strong>: the Anthropic Claude API. The claude
+    CLI handles the HTTPS call internally; from our perspective it's a subprocess
+    that prints to stdout. Auth = your existing subscription session, NOT an API key
+    (no new Doppler secret, no new billing surface).
+  </li>
+</ul>
+
+<h2>Sequence — one scoring run</h2>
+
+<p>
+  Shows one tick of the driver: pull pending items, score each via <code>claude -p</code>,
+  write back. The "Claude API" participant is implicit — <code>claude -p</code> handles
+  the HTTPS call internally; we just see stdin/stdout from our side.
+</p>
+
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Cron as Cron / manual<br/>(on laptop)
+    participant Driver as rescore.py<br/>(driver script)
+    participant Profile as jobs_profile.md<br/>(supply paragraph)
+    participant DB as curator.items<br/>(via Supabase REST)
+    participant Scorer as LLMScorer<br/>(Python class)
+    participant CLI as claude -p<br/>(subprocess)
+    participant Claude as Claude<br/>(cloud model)
+
+    Cron->>Driver: tick · run rescore
+    Driver->>Profile: read paragraph
+    Profile-->>Driver: profile text
+
+    Driver->>DB: GET /items?topic=eq.jobs<br/>&relevance=is.null<br/>(or "needs rescore" filter)
+    DB-->>Driver: pending items (~N)
+
+    loop for each pending item
+        Driver->>Scorer: score(item, profile)
+        Scorer->>Scorer: render prompt template<br/>(profile + item + rubric)
+        Scorer->>CLI: spawn · write prompt to stdin
+        CLI->>Claude: HTTPS request<br/>(handled by CLI harness)
+        Claude-->>CLI: response text
+        CLI-->>Scorer: stdout · expected JSON
+        alt valid JSON
+            Scorer->>Scorer: parse {score, reason}
+            Scorer-->>Driver: (score, reason)
+            Driver->>DB: PATCH /items?id=eq.X<br/>{relevance: score,<br/>metadata.llm_reason: reason}
+            DB-->>Driver: 204
+        else malformed / CLI error
+            Scorer-->>Driver: error
+            Driver->>Driver: log · skip · continue
+        end
+    end
+
+    Driver-->>Cron: done · N scored, M skipped
+
+    Note over Cron,Claude: All within the laptop's network · Claude API call happens<br/>inside the CLI subprocess · auth is the subscription session, not an API key
+    Note over Driver,DB: REST writes already authorized · SUPABASE_BACKEND=rest pattern from May 26
+</pre>
+<p class="diagram-source">Sequence diagram · Mermaid · inline.</p>
+
+<h2>What changes from the regex scorer</h2>
+
+<table class="kv">
+  <thead>
+    <tr><th>Concern</th><th>Today (regex / SKILL_WEIGHTS)</th><th>After swap (claude -p)</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Where the supply profile lives</td>
+      <td class="old">Python dict in <code>jobs.py</code></td>
+      <td class="new">Prose paragraph in <code>jobs_profile.md</code></td>
+    </tr>
+    <tr>
+      <td>How "tuning" works</td>
+      <td class="old">Edit a number, redeploy Lambda</td>
+      <td class="new">Edit a sentence, next run picks it up (no redeploy)</td>
+    </tr>
+    <tr>
+      <td>When scoring happens</td>
+      <td class="old">Inside the scraper Lambda, at upsert time</td>
+      <td class="new">Separate pass on the laptop, after items are already in DB</td>
+    </tr>
+    <tr>
+      <td>Per-item latency</td>
+      <td class="old">&lt; 1 ms (regex)</td>
+      <td class="new">~5-15 s (CLI startup + Claude call)</td>
+    </tr>
+    <tr>
+      <td>Per-item cost</td>
+      <td class="old">$0 (CPU only)</td>
+      <td class="new">Consumes Anthropic subscription quota</td>
+    </tr>
+    <tr>
+      <td>Determinism</td>
+      <td class="old">Same input → same score, always</td>
+      <td class="new">Same input → similar score; variance per run</td>
+    </tr>
+    <tr>
+      <td>Debuggability when surprised</td>
+      <td class="old">Trace which keywords matched</td>
+      <td class="new">Read <code>metadata.llm_reason</code></td>
+    </tr>
+    <tr>
+      <td>What populates <code>items.relevance</code></td>
+      <td class="old">Lambda · regex output</td>
+      <td class="new">Laptop driver · LLM <code>{score}</code> field</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>What's NOT in v0</h2>
+
+<div class="callout bad">
+  <strong>No hybrid / combination.</strong>
+  <p>
+    The regex scorer is not running alongside as a fallback or pre-filter. When we
+    enable the LLM scorer, it owns the <code>relevance</code> column entirely. Easier
+    to reason about, easier to evaluate ("is the LLM ranking good enough on its own?").
+  </p>
+</div>
+
+<div class="callout bad">
+  <strong>No re-scoring of old items on profile change.</strong>
+  <p>
+    Each item is scored once (when the driver first sees it). If you edit the profile
+    paragraph, only items scored <em>after</em> the edit reflect the new judgment.
+    Existing items keep their stale scores until they age out of the window or you add
+    a "rescore everything" command.
+  </p>
+</div>
+
+<div class="callout bad">
+  <strong>No concurrency.</strong>
+  <p>
+    One <code>claude -p</code> at a time. Plenty fast for ~30 items/day. Async/batch
+    would matter only at much larger volume.
+  </p>
+</div>
+
+<div class="callout">
+  <strong>No removal of the regex code yet.</strong>
+  <p>
+    <code>score_item</code> and <code>SKILL_WEIGHTS</code> stay in <code>jobs.py</code>
+    during the trial. The Lambda still computes a regex score (cheap) and writes it to
+    <code>relevance</code>; the laptop driver overwrites that value with the LLM score
+    after the item lands. Once the LLM scorer is trusted, we delete the regex path in
+    a follow-up commit (one-line change in the pipeline + delete dead code).
+  </p>
+</div>
+
+<h2>How to view this page</h2>
+
+<pre class="code">cd ~/dev/scrap
+python3 -m http.server 8765 --directory ~/dev/scrap --bind 127.0.0.1
+<span class="c"># http://localhost:8765/docs/curator-llm-ranking.html</span></pre>
+
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js"></script>
+<script src="../diagrams/viewer/diagram-viewer.js" defer></script>
+
+</body>
+</html>

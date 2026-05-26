@@ -1,0 +1,61 @@
+@startuml C4_Container_LLMRanking_BlastRadius
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Container.puml
+
+title Blast radius — claude -p relevance scorer (L2 Container)\nWhat's NEW, MODIFIED, INDIRECTLY-AFFECTED, and UNCHANGED when we swap the regex scorer for an LLM judgment.
+
+AddElementTag("critical", $bgColor="#FF6666", $borderColor="#990000", $fontColor="#FFFFFF", $legendText="🔴 NEW — added by this plan")
+AddElementTag("high",     $bgColor="#FFB3B3", $borderColor="#B30000", $fontColor="#660000", $legendText="🚨 MODIFIED — edited by this plan")
+AddElementTag("medium",   $bgColor="#FFE0B3", $borderColor="#CC8800", $fontColor="#663300", $legendText="🟡 INDIRECTLY-AFFECTED — behavior shifts without local code change")
+AddElementTag("low",      $bgColor="#E0F0FF", $borderColor="#3366AA", $fontColor="#003366", $legendText="✅ UNCHANGED — already in production")
+AddElementTag("external", $bgColor="#F2F2F2", $borderColor="#666666", $fontColor="#333333", $legendText="External — outside the system")
+AddRelTag("blast", $lineColor="#B30000", $textColor="#B30000", $lineStyle="dashed")
+AddRelTag("static", $lineColor="#888888", $textColor="#888888")
+
+' ===== People + external =====
+Person(operator, "Operator (you)", "Triggers manual or scheduled rescore runs from the laptop.", $tags="low")
+System_Ext(anthropic, "Anthropic Claude API", "Cloud LLM endpoint. NEW egress destination — but routed via the claude CLI, not the SDK.", $tags="external")
+
+' ===== Laptop boundary =====
+System_Boundary(laptop, "Laptop (WSL2 · your subscription)") {
+    Container(cron, "cron / manual trigger", "systemd-timer or shell", "NEW: kicks the driver periodically or on demand. Decouples scoring cadence from scraper schedule.", $tags="critical")
+    Container(rescore, "rescore.py driver", "Python · ~80 LoC · embeds LLMScorer class", "NEW: GETs pending items via PostgREST, scores each via LLMScorer, PATCHes (relevance, metadata.llm_reason) back. ~5 min wall-clock for 30 items.", $tags="critical")
+    Container(profile, "jobs_profile.md", "Markdown file", "NEW: prose supply paragraph. Replaces SKILL_WEIGHTS as the source of truth for who you are and what you take.", $tags="critical")
+    Container(claudecli, "claude -p subprocess", "Claude Code CLI · print mode", "NEW invocation path. Binary already installed; auth via existing subscription session (no API key plumbing).", $tags="critical")
+}
+
+' ===== AWS boundary =====
+System_Boundary(aws, "AWS · ap-southeast-1") {
+    Container(eventbridge, "EventBridge Scheduler", "cron(0 17 * * ? *) UTC = midnight ICT", "Unchanged — same daily tick.", $tags="low")
+    Container(lambda, "scrape-job-curator Lambda", "Python in container image", "Code path unchanged. Its score_item() (regex / SKILL_WEIGHTS) still runs at upsert, but its output gets overwritten downstream.", $tags="low")
+    Container(restwriter, "RestWriter", "Python · in Lambda image", "Unchanged — both Lambda ingestion writes AND laptop rescore writes go through this transport pattern.", $tags="low")
+}
+
+' ===== Supabase boundary =====
+System_Boundary(supabase, "Supabase project · knowledgebase") {
+    Container(postgrest, "PostgREST (Door A)", "Supabase edge", "Unchanged endpoint — one additional writer client (rescore.py) and one additional PATCH path.", $tags="low")
+    ContainerDb(items, "curator.items.relevance", "REAL column · indexed", "INDIRECTLY-AFFECTED: column's meaning shifts from 'sum of regex keyword hits' to 'LLM judgment on 0-10 scale'. Schema unchanged; semantics inverted.", $tags="medium")
+}
+
+' ===== Vercel =====
+Container_Ext(vercel, "Vercel curator UI", "Astro static site at curator-anak.vercel.app", "No code change. The 'sort by relevance' toggle and newsfeed top-15 ranking shift because the underlying column holds a different score.", $tags="medium")
+
+' ===== Static structure (unchanged context — gray) =====
+Rel(operator, cron, "Sets schedule / triggers", $tags="static")
+Rel(eventbridge, lambda, "Daily invoke", $tags="static")
+Rel(lambda, restwriter, "Calls score_item then writes (regex)", $tags="static")
+Rel(restwriter, postgrest, "POST /rest/v1/items", $tags="static")
+Rel(postgrest, items, "INSERT ON CONFLICT DO UPDATE", $tags="static")
+Rel(vercel, postgrest, "GET /items + Realtime subscribe", $tags="static")
+
+' ===== Blast-radius edges (dashed red) =====
+Rel(cron, rescore, "1. NEW: fires rescore driver", $tags="blast")
+Rel(rescore, profile, "2. NEW: read supply paragraph", $tags="blast")
+Rel(rescore, postgrest, "3. NEW: GET items needing rescore", $tags="blast")
+Rel(rescore, claudecli, "4. NEW: spawn subprocess · prompt on stdin", $tags="blast")
+Rel(claudecli, anthropic, "5. NEW egress: HTTPS via subscription session", $tags="blast")
+Rel(rescore, postgrest, "6. NEW: PATCH relevance + metadata.llm_reason (overwrites Lambda's regex score)", $tags="blast")
+Rel(postgrest, items, "7. relevance value now LLM-sourced", $tags="blast")
+
+SHOW_LEGEND()
+@enduml

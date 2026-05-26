@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Curator · rank by relevance — supply (your profile) meets demand (jobs)</title>
+<link rel="stylesheet" href="../diagrams/viewer/diagram-viewer.css">
+<style>
+  :root {
+    --surface: #14171c;
+    --surface-2: #1c2026;
+    --surface-3: #232830;
+    --text: #e8eaed;
+    --muted: #9aa3ad;
+    --border: #2a2f37;
+    --accent: #5eead4;
+    --accent-warm: #fbbf24;
+    --accent-cool: #8fd0ff;
+    --accent-cat: #c8a6ff;
+    --good: #2ecc71;
+    --bad: #ef4444;
+    --supply: #8fd0ff;
+    --demand: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0 24px 64px;
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--text);
+    background: var(--surface);
+    max-width: 1100px;
+    margin-inline: auto;
+  }
+  h1 { font-size: 1.7rem; margin: 1.4rem 0 0.5rem; }
+  h1 .sub { color: var(--muted); font-size: 0.7em; font-weight: normal; display: block; margin-top: 0.25rem; }
+  h2 { font-size: 1.25rem; margin-top: 2.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h3 { font-size: 1.05rem; margin-top: 1.6rem; color: var(--accent); }
+  p { margin: 0.5rem 0 0.9rem; }
+  .lead { color: var(--muted); font-size: 0.95rem; margin-bottom: 1.2rem; }
+  code { background: var(--surface-2); padding: 2px 6px; border-radius: 3px; color: var(--accent); font-size: 0.92em; }
+  a { color: var(--accent); }
+  ul { margin: 0.4rem 0 0.9rem; }
+  li { margin: 0.15rem 0; }
+
+  pre.mermaid {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem;
+    margin: 16px 0 24px;
+  }
+  .diagram-source {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin: -16px 0 22px;
+    font-style: italic;
+  }
+
+  pre.code {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  pre.code .c { color: var(--muted); }
+  pre.code .k { color: var(--accent-cool); }
+  pre.code .s { color: var(--accent-warm); }
+  pre.code .n { color: var(--good); }
+
+  table.kv {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0 24px;
+    font-size: 0.92rem;
+  }
+  table.kv th, table.kv td {
+    text-align: left;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    vertical-align: top;
+  }
+  table.kv th {
+    background: var(--surface-2);
+    font-weight: 600;
+    font-size: 0.83rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  table.kv td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  table.kv td.weight { text-align: right; font-variant-numeric: tabular-nums; color: var(--good); font-weight: 600; }
+  table.kv td.tier-a { color: var(--good); font-weight: 600; }
+  table.kv td.tier-b { color: var(--accent-warm); }
+  table.kv td.tier-c { color: var(--muted); }
+  table.kv .neg { color: var(--bad); }
+
+  .callout {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent-warm);
+    border-radius: 4px;
+    padding: 12px 18px;
+    margin: 14px 0 22px;
+    font-size: 0.95rem;
+  }
+  .callout strong { color: var(--accent-warm); }
+  .callout.good { border-left-color: var(--good); }
+  .callout.good strong { color: var(--good); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.bad strong { color: var(--bad); }
+  .callout.supply { border-left-color: var(--supply); }
+  .callout.supply strong { color: var(--supply); }
+  .callout.demand { border-left-color: var(--demand); }
+  .callout.demand strong { color: var(--demand); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .punchline {
+    font-size: 1.05rem;
+    color: var(--text);
+    background: linear-gradient(90deg, rgba(94, 234, 212, 0.08), transparent);
+    border-left: 4px solid var(--accent);
+    padding: 14px 18px;
+    margin: 18px 0 26px;
+    border-radius: 0 4px 4px 0;
+  }
+  .punchline strong { color: var(--accent); }
+
+  .worked-example {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 14px 18px;
+    margin: 16px 0 24px;
+    font-size: 0.92rem;
+  }
+  .worked-example h4 { margin: 0 0 0.6rem; color: var(--accent); font-size: 0.95rem; }
+  .worked-example .item {
+    background: var(--surface-3);
+    padding: 10px 14px;
+    border-radius: 3px;
+    margin-bottom: 10px;
+    font-size: 0.88rem;
+  }
+  .worked-example .item .label { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+
+  .nav {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin: 1.4rem 0 0;
+  }
+  .nav a { color: var(--accent); text-decoration: none; border-bottom: 1px dashed transparent; }
+  .nav a:hover { border-bottom-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<p class="nav"><a href="index.html">← docs index</a> · sibling: <a href="curator-may26-recovery.html">curator-may26-recovery.html</a></p>
+
+<h1>
+  Rank by relevance
+  <span class="sub">how the curator marries demand (job listings) with supply (your skill profile)</span>
+</h1>
+
+<p class="lead">
+  The <em>jobs</em> topic ships with a relevance scorer baked into the pipeline.
+  This page walks through how it works — the two inputs, the scoring algorithm,
+  where the result is stored, and what's intentionally NOT in the model.
+</p>
+
+<div class="punchline">
+  <strong>One-sentence model:</strong>
+  every job item is scored by counting weighted keyword hits between the item's
+  <em>(title, tags, content)</em> and a hard-coded <em>SKILL_WEIGHTS</em> dict
+  (your supply profile). Title hits count 2×, tag &amp; content hits 1×. The score
+  is stored on each row, used by the UI's <em>sort by relevance</em> toggle, and gates
+  what makes it into the daily digest.
+</div>
+
+<h2>The two sides</h2>
+
+<div class="callout supply">
+  <strong>SUPPLY · your skill profile</strong>
+  <p>
+    A Python <code>dict</code> at <code>curator/topics/jobs.py:54-80</code>
+    (<code>SKILL_WEIGHTS</code>): keyword → numeric weight, organised in three rough tiers.
+    Tuned manually to match Anak's portfolio. <strong>Not</strong> learned, <strong>not</strong>
+    in the DB, <strong>not</strong> sourced from <code>preferences</code> /
+    <code>scenario</code> / <code>patterns</code> CLIs. Updating it = code edit + Lambda redeploy.
+  </p>
+  <p>
+    A small <code>NEGATIVE_KEYWORDS</code> list at line 82 carries deal-breakers
+    (<code>"on-site only"</code>, <code>"us citizen only"</code>, etc.) with a flat
+    <code>-5.0</code> penalty per hit. Anti-supply, essentially.
+  </p>
+</div>
+
+<div class="callout demand">
+  <strong>DEMAND · the incoming job stream</strong>
+  <p>
+    Seven fetchers (HN Who-is-hiring, RemoteOK, Remotive, WeWorkRemotely,
+    r/forhire, r/MachineLearningJobs, r/jobbit) emit <code>Item</code> objects with
+    <code>title</code>, <code>content</code>, and (for RemoteOK)
+    <code>metadata.tags</code>. The pipeline calls <code>score_item(item)</code> on
+    each one before upsert.
+  </p>
+  <p>
+    Items below <code>RELEVANCE_THRESHOLD = 1.0</code> (configurable via
+    <code>JOB_RELEVANCE_THRESHOLD</code> env var) are still stored, but excluded
+    from the digest + top-N markdown artifacts.
+  </p>
+</div>
+
+<h2>The supply dictionary, by tier</h2>
+
+<p>
+  Tiers aren't a code construct — the file comments group keywords by intent.
+  Higher weight = bigger contribution to score per hit.
+</p>
+
+<table class="kv">
+  <thead>
+    <tr><th>Tier</th><th>Intent</th><th>Sample keywords</th><th>Weight range</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="tier-a">A — direct match</td>
+      <td>jobs that are <em>this is what I do</em></td>
+      <td><code>web scraping</code>, <code>mcp</code>, <code>ai agent</code>, <code>rag</code>, <code>meta ads</code>, <code>ai automation</code>, <code>n8n</code></td>
+      <td class="weight">3.0 – 4.0</td>
+    </tr>
+    <tr>
+      <td class="tier-b">B — broad skill</td>
+      <td>jobs that use my tools</td>
+      <td><code>aws</code>, <code>python</code>, <code>typescript</code>, <code>supabase</code>, <code>astro</code>, <code>cold email</code>, <code>telegram bot</code></td>
+      <td class="weight">1.0 – 2.5</td>
+    </tr>
+    <tr>
+      <td class="tier-c">C — adjacent</td>
+      <td>I could plausibly take it</td>
+      <td><code>osint</code>, <code>blockchain</code>, <code>trading</code>, <code>fintech</code></td>
+      <td class="weight">0.5 – 1.0</td>
+    </tr>
+    <tr>
+      <td class="neg">— negative</td>
+      <td>deal-breaker, subtract</td>
+      <td><code>on-site only</code>, <code>no remote</code>, <code>us citizen only</code></td>
+      <td class="weight">−5.0 each</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>The scoring algorithm</h2>
+
+<p>
+  Implemented at <code>curator/topics/jobs.py:127-154</code>. Here it is in essence:
+</p>
+
+<pre class="code"><span class="k">def</span> <span class="n">score_item</span>(item) <span class="k">-&gt;</span> tuple[<span class="k">float</span>, list[<span class="k">str</span>]]:
+    score = <span class="n">0.0</span>
+    matched = []
+    <span class="k">for</span> keyword, weight <span class="k">in</span> SKILL_WEIGHTS.items():
+        hits = <span class="n">0</span>
+        <span class="k">if</span> keyword <span class="k">in</span> item.title:    hits += <span class="n">2</span>   <span class="c"># title weighted 2×</span>
+        <span class="k">if</span> keyword <span class="k">in</span> item.tags:     hits += <span class="n">1</span>
+        <span class="k">if</span> keyword <span class="k">in</span> item.content:  hits += <span class="n">1</span>
+        <span class="k">if</span> hits:
+            score += weight * hits
+            matched.append(keyword)
+    <span class="k">for</span> negative <span class="k">in</span> NEGATIVE_KEYWORDS:
+        <span class="k">if</span> negative <span class="k">in</span> item.title <span class="k">or</span> negative <span class="k">in</span> item.content:
+            score -= <span class="n">5.0</span>
+    <span class="k">return</span> score, matched</pre>
+
+<p>
+  The real implementation uses precompiled regex with <code>\b</code> word boundaries
+  and case-insensitive flags — but the math is the same: <strong>title hits count
+  double, tags + content count single, weights multiply hits, and a hit anywhere
+  adds the keyword to <code>matched</code> for later inspection.</strong>
+</p>
+
+<div class="worked-example">
+  <h4>Worked example</h4>
+  <div class="item">
+    <span class="label">Title:</span> "Senior Python Engineer · LLM Infrastructure · Remote"<br>
+    <span class="label">Content:</span> "Looking for someone with FastAPI, AWS Lambda, and LLM experience"<br>
+    <span class="label">Tags:</span> (none)
+  </div>
+  <table class="kv" style="margin: 6px 0 0;">
+    <thead>
+      <tr><th>Keyword</th><th>Weight</th><th>Title</th><th>Tags</th><th>Content</th><th>Hits</th><th>Contribution</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>python</code></td><td class="num">2.0</td><td class="num">2</td><td class="num">0</td><td class="num">0</td><td class="num">2</td><td class="weight">4.0</td></tr>
+      <tr><td><code>llm</code></td><td class="num">3.0</td><td class="num">2</td><td class="num">0</td><td class="num">1</td><td class="num">3</td><td class="weight">9.0</td></tr>
+      <tr><td><code>aws</code></td><td class="num">1.5</td><td class="num">0</td><td class="num">0</td><td class="num">1</td><td class="num">1</td><td class="weight">1.5</td></tr>
+      <tr><td><code>lambda</code></td><td class="num">2.0</td><td class="num">0</td><td class="num">0</td><td class="num">1</td><td class="num">1</td><td class="weight">2.0</td></tr>
+      <tr><td colspan="6" style="text-align:right;font-weight:600">Total relevance score</td><td class="weight">16.5</td></tr>
+    </tbody>
+  </table>
+  <p style="margin: 10px 0 0; color: var(--muted); font-size: 0.85rem;">
+    No negative keywords matched. <code>matched = ["python", "llm", "aws", "lambda"]</code>
+    is also returned (for debugging / later display).
+  </p>
+</div>
+
+<h2>Where the score gets used</h2>
+
+<table class="kv">
+  <thead>
+    <tr><th>Consumer</th><th>Where</th><th>How it uses the score</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>DB column <code>items.relevance</code></td>
+      <td><code>curator.items</code> · REAL nullable · indexed</td>
+      <td>Persisted on every upsert. Idempotent — re-scored on each run.</td>
+    </tr>
+    <tr>
+      <td>UI · "sort by relevance" toggle</td>
+      <td><code>web/src/pages/index.astro</code></td>
+      <td>When checked, the items pane sorts by <code>relevance DESC</code> instead of <code>published_at DESC</code>. <code>newsfeed</code> view is always relevance-sorted by default.</td>
+    </tr>
+    <tr>
+      <td>Newsfeed top-15</td>
+      <td>Browser, client-side</td>
+      <td><code>allItems.sort(byRelevance).slice(0, 15)</code> — the cross-topic curated landing view.</td>
+    </tr>
+    <tr>
+      <td>Digest gate</td>
+      <td><code>jobs.py:362-412</code></td>
+      <td>Items with <code>score &lt; threshold (1.0)</code> excluded from <code>jobs_digest.md</code> and from today's digest / top-N artifacts. Stored in DB regardless.</td>
+    </tr>
+    <tr>
+      <td>Top-N digest</td>
+      <td><code>jobs_topN_YYYY-MM-DD.md</code></td>
+      <td>Today's items sorted by relevance, sliced to top 10. The "best matches" feed.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>What's intentionally NOT in the model</h2>
+
+<div class="callout bad">
+  <strong>No machine learning. No embeddings. No personalisation loop.</strong>
+  <p>
+    The whole supply profile is a hand-tuned dict. There's no semantic similarity,
+    no LLM call, no labelled training data, no clicks-feedback. A job that talks
+    about "computer vision for retail" but never says <code>cv</code> or
+    <code>vision</code> in those exact words will score 0 even if it'd be a great
+    fit for you. The model is fast, free, deterministic, and trivially debuggable
+    — and that's the explicit trade.
+  </p>
+</div>
+
+<div class="callout">
+  <strong>No location / time-zone / pay parsing.</strong>
+  <p>
+    Remoteness is approximated only by the negative-keyword list (and even then
+    only when sources are honest about it). Salary, time-zone, contract-vs-FTE
+    are not scored — even though most fetchers expose them in the raw payload.
+    Easy extension if you want it.
+  </p>
+</div>
+
+<div class="callout">
+  <strong>No supply-profile versioning or A/B.</strong>
+  <p>
+    Editing <code>SKILL_WEIGHTS</code> is a code change that takes effect on the
+    next deploy. Past items keep whatever score they had when ingested
+    (<code>relevance</code> is computed at insert/upsert, never recomputed) until
+    the same item is re-scraped and upserted — at which point it gets re-scored
+    with the new weights. So the corpus mixes old + new scoring conventions
+    after a weight change.
+  </p>
+</div>
+
+<h2>Diagram 1 — supply meets demand</h2>
+
+<p>
+  High-level pipeline. Two inputs (your profile, the daily job stream) feed one
+  scoring function. The output (item with relevance) fans out to four consumers.
+</p>
+
+<pre class="mermaid">
+flowchart LR
+    subgraph supply["SUPPLY · your profile (hard-coded)"]
+        direction TB
+        SK["SKILL_WEIGHTS dict
+~50 keywords · 3 tiers"]
+        NEG["NEGATIVE_KEYWORDS
+on-site, us-only, …
+penalty −5.0 each"]
+    end
+
+    subgraph demand["DEMAND · daily job stream"]
+        direction TB
+        HN["HN: Who is Hiring"]
+        ROK["RemoteOK"]
+        RDT["r/forhire
+r/MachineLearningJobs
+r/jobbit"]
+        WWR["WeWorkRemotely
++ Remotive"]
+    end
+
+    HN     --&gt; ITEM["Item
+title · content · tags"]
+    ROK    --&gt; ITEM
+    RDT    --&gt; ITEM
+    WWR    --&gt; ITEM
+
+    SK  --&gt; SCORE["score_item(item)
+returns (score, matched)"]
+    NEG --&gt; SCORE
+    ITEM --&gt; SCORE
+
+    SCORE --&gt; DB["curator.items.relevance
+REAL · indexed"]
+
+    DB --&gt; UI["UI · sort-by-relevance toggle
++ newsfeed top-15"]
+    DB --&gt; DIG["Digest gate
+threshold ≥ 1.0"]
+    DIG --&gt; CORPUS["jobs_digest.md
+(NotebookLM source)"]
+    DIG --&gt; TOPN["jobs_topN_YYYY-MM-DD.md
+'best matches'"]
+
+    classDef supply fill:#1a2c40,color:#8fd0ff,stroke:#8fd0ff
+    classDef demand fill:#3a2c14,color:#fbbf24,stroke:#fbbf24
+    classDef engine fill:#14352a,color:#6ee7c0,stroke:#6ee7c0,stroke-width:2px
+    classDef sink   fill:#232830,color:#e8eaed,stroke:#9aa3ad
+
+    class SK,NEG supply
+    class HN,ROK,RDT,WWR,ITEM demand
+    class SCORE engine
+    class DB,UI,DIG,CORPUS,TOPN sink
+</pre>
+<p class="diagram-source">Ad-hoc flowchart · Mermaid · inline.</p>
+
+<h2>Diagram 2 — inside score_item()</h2>
+
+<p>
+  Per-item flow. The loop body is the only piece doing real work; everything else
+  is plumbing. <code>hits</code> is the per-keyword accumulator that title-doubles,
+  weights multiply, and per-keyword contributions sum to give the final score.
+</p>
+
+<pre class="mermaid">
+flowchart TD
+    A["Item arrives
+title · tags · content"] --&gt; B["score = 0
+matched = []"]
+    B --&gt; C{"For each
+(keyword, weight)
+in SKILL_WEIGHTS"}
+
+    C --&gt; D["hits = 0"]
+    D --&gt; E{"keyword in title?"}
+    E --&gt;|yes| E1["hits += 2
+(title weighted 2×)"]
+    E --&gt;|no| F{"keyword in tags?"}
+    E1 --&gt; F
+    F --&gt;|yes| F1["hits += 1"]
+    F --&gt;|no| G{"keyword in content?"}
+    F1 --&gt; G
+    G --&gt;|yes| G1["hits += 1"]
+    G --&gt;|no| H{"hits &gt; 0?"}
+    G1 --&gt; H
+    H --&gt;|yes| H1["score += weight * hits
+matched.append(keyword)"]
+    H --&gt;|no| C
+    H1 --&gt; C
+
+    C --&gt;|loop done| I{"For each
+negative in
+NEGATIVE_KEYWORDS"}
+    I --&gt;|matches title or content| I1["score −= 5.0"]
+    I1 --&gt; I
+    I --&gt;|loop done| J["return (score, matched)"]
+
+    classDef accent fill:#14352a,color:#6ee7c0,stroke:#6ee7c0,stroke-width:2px
+    classDef neg    fill:#3a1c1c,color:#ff9a9a,stroke:#ff9a9a
+    class H1 accent
+    class I,I1 neg
+</pre>
+<p class="diagram-source">Ad-hoc flowchart · Mermaid · inline.</p>
+
+<h2>How to tune</h2>
+
+<ol>
+  <li>Edit <code>SKILL_WEIGHTS</code> in <code>curator/topics/jobs.py</code> — add a
+    keyword, bump a weight, demote one to a lower tier.</li>
+  <li>Add deal-breakers to <code>NEGATIVE_KEYWORDS</code> if a particular phrase
+    keeps surfacing irrelevant matches.</li>
+  <li>Tweak <code>RELEVANCE_THRESHOLD</code> (env: <code>JOB_RELEVANCE_THRESHOLD</code>)
+    if too much / too little is reaching the digest. Default <code>1.0</code> is
+    intentionally lenient.</li>
+  <li>Redeploy the jobs Lambda. New scores apply to items fetched <em>after</em> the
+    deploy; old items keep their pre-change scores until re-scraped.</li>
+</ol>
+
+<h2>How to view this page</h2>
+
+<p>
+  Mermaid &amp; <code>svg-pan-zoom</code> load from CDN; the vendored
+  <code>diagram-viewer.js</code> inlines diagrams via <code>fetch()</code> — so this
+  page only works when served over HTTP, not via <code>file://</code>:
+</p>
+
+<pre class="code">cd ~/dev/scrap
+./scripts/serve-diagrams.sh
+<span class="c"># or, if port 8000 is held by another http.server:</span>
+python3 -m http.server 8765 --directory ~/dev/scrap --bind 127.0.0.1
+<span class="c"># then open:</span>
+<span class="c"># http://localhost:8765/docs/curator-relevance-scoring.html</span></pre>
+
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js"></script>
+<script src="../diagrams/viewer/diagram-viewer.js" defer></script>
+
+</body>
+</html>
