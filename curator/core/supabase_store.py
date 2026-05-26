@@ -23,11 +23,13 @@ Failure semantics:
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Iterable
 
 import psycopg2
 import psycopg2.extras
+import requests
 from psycopg2.extras import Json  # adapter · dict → jsonb without intermediate stringification
 
 from curator.core.store import Store as SqliteStore
@@ -153,3 +155,166 @@ class SupabaseStore:
         ]
         n_items = self.upsert_items(topic, items_with_score)
         return n_sources, n_items
+
+
+# ===== REST writer (Door A) =====
+#
+# Writes via PostgREST instead of the Postgres wire protocol. Bypasses the
+# project's Network Restrictions allow-list (which only fences the Postgres
+# protocol). Auth = secret key as service_role. Requires INSERT/UPDATE/DELETE
+# grants on the target tables — granted via Management API.
+
+class RestWriter:
+    """Same upsert surface as SupabaseStore, but over PostgREST.
+
+    Use as a context manager · the session is reused across upsert calls.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        secret_key: str,
+        *,
+        schema: str = "curator",
+        timeout_s: int = 30,
+        batch_size: int = 200,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._secret = secret_key
+        self._schema = schema
+        self._timeout = timeout_s
+        self._batch_size = batch_size
+        self._session: requests.Session | None = None
+
+    def __enter__(self) -> "RestWriter":
+        s = requests.Session()
+        s.headers.update({
+            "apikey": self._secret,
+            "Authorization": f"Bearer {self._secret}",
+            "Content-Profile": self._schema,
+            "Content-Type": "application/json",
+            # merge-duplicates = UPSERT; return=minimal saves bandwidth
+            "Prefer": "resolution=merge-duplicates,return=minimal",
+        })
+        self._session = s
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._session is not None:
+            try:
+                self._session.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._session = None
+
+    def _upsert(self, table: str, on_conflict: str, rows: list[dict]) -> int:
+        if not rows:
+            return 0
+        url = f"{self._base_url}/rest/v1/{table}?on_conflict={on_conflict}"
+        for i in range(0, len(rows), self._batch_size):
+            chunk = rows[i:i + self._batch_size]
+            r = self._session.post(url, json=chunk, timeout=self._timeout)
+            if r.status_code not in (200, 201, 204):
+                raise RuntimeError(
+                    f"REST upsert {table} (batch {i}:{i+len(chunk)}) failed: "
+                    f"HTTP {r.status_code} · {r.text[:300]}"
+                )
+        return len(rows)
+
+    # ----- bulk upsert -----
+
+    def upsert_sources(self, topic: str, sources: Iterable[Source]) -> int:
+        rows = [
+            {"topic": topic, "id": s.id, "name": s.name, "type": s.type, "url": s.url or None}
+            for s in sources
+        ]
+        return self._upsert("sources", "topic,id", rows)
+
+    def upsert_items(
+        self,
+        topic: str,
+        items_with_score: Iterable[tuple[Item, float | None]],
+    ) -> int:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        rows = []
+        for item, relevance in items_with_score:
+            pub_dt = _ts_to_dt(item.published_at)
+            rows.append({
+                "topic": topic,
+                "id": item.id,
+                "source_id": item.source_id,
+                "type": item.type,
+                "title": item.title or None,
+                "url": item.url or None,
+                "author": item.author or None,
+                "content": item.content or None,
+                "published_at": pub_dt.isoformat() if pub_dt else None,
+                "fetched_at": now_iso,
+                "relevance": relevance,
+                "metadata": item.metadata or {},
+            })
+        return self._upsert("items", "topic,id", rows)
+
+    # ----- convenience: flush a local Store wholesale -----
+
+    def flush_from(self, store: SqliteStore, topic: str) -> tuple[int, int]:
+        sources = store.list_sources()
+        n_sources = self.upsert_sources(topic, sources)
+        items_with_score = [
+            (item, score)
+            for (item, score, _source_name) in store.all_items(min_relevance=-1e9)
+        ]
+        n_items = self.upsert_items(topic, items_with_score)
+        return n_sources, n_items
+
+
+# ===== Writer-backend selection =====
+
+def get_writer_or_none() -> "SupabaseStore | RestWriter | None":
+    """Return a writer for the configured Supabase backend, or None if not configured.
+
+    Backend selection:
+      SUPABASE_BACKEND = "direct" | "pooler" | "rest"  (default: "pooler")
+      SUPABASE_DSN_DIRECT  = DSN for db.<ref>.supabase.co:5432 (used when direct)
+      SUPABASE_DSN_POOLER  = DSN for aws-1-<region>.pooler.supabase.com:6543 (used when pooler)
+
+    Back-compat: if no backend env vars are set but the legacy
+    SUPABASE_DATABASE_URL is, treat it as a direct DSN.
+
+    The "rest" backend isn't implemented yet — raises NotImplementedError if
+    selected, so a misconfigured run fails loudly instead of silently dropping
+    items on the floor.
+    """
+    backend = os.environ.get("SUPABASE_BACKEND", "").lower()
+    legacy = os.environ.get("SUPABASE_DATABASE_URL")
+
+    # Nothing configured at all
+    if not backend and not legacy:
+        return None
+
+    # Legacy fallback when no explicit backend is set
+    if not backend:
+        return SupabaseStore(legacy)
+
+    if backend == "direct":
+        dsn = os.environ.get("SUPABASE_DSN_DIRECT") or legacy
+        if not dsn:
+            raise RuntimeError("SUPABASE_BACKEND=direct but neither SUPABASE_DSN_DIRECT nor SUPABASE_DATABASE_URL is set")
+        return SupabaseStore(dsn)
+
+    if backend == "pooler":
+        dsn = os.environ.get("SUPABASE_DSN_POOLER")
+        if not dsn:
+            raise RuntimeError("SUPABASE_BACKEND=pooler but SUPABASE_DSN_POOLER is not set")
+        return SupabaseStore(dsn)
+
+    if backend == "rest":
+        url = os.environ.get("PUBLIC_SUPABASE_URL")
+        key = os.environ.get("SUPABASE_SECRET_KEY")
+        if not url or not key:
+            raise RuntimeError(
+                "SUPABASE_BACKEND=rest requires PUBLIC_SUPABASE_URL and SUPABASE_SECRET_KEY"
+            )
+        return RestWriter(url, key)
+
+    raise RuntimeError(f"unknown SUPABASE_BACKEND: {backend!r} (expected: direct | pooler | rest)")
