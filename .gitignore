@@ -13,5 +13,6 @@ digest.md
 jobs.html
 jobs_digest.md
 jobs_*.md
+!curator/topics/jobs_profile.md
 jobs_top*_*.md
 tools/plantuml.jar
