@@ -7,6 +7,19 @@
 #   - Schedule    `curator-daily-tick`   · EventBridge Scheduler, daily,
 #                                          17:00 UTC = 00:00 ICT, target = SNS topic
 #
+# LEGACY NOTE (as of 2026-05-27): the daily cron path has moved to
+# AWS Step Functions (see lambda/setup-step-function.sh). The scheduler
+# `curator-daily-tick` now targets the curator-daily state machine
+# instead of this SNS topic. The SNS topic + subscriptions stay alive
+# as the manual-trigger path — `aws sns publish --topic-arn ... --message
+# manual-test` still fans out to the scrape Lambdas (without invoking
+# the rescore step that SFN adds). Use SFN for "run the whole DAG";
+# use SNS for "just run the scrape Lambdas to test ingestion".
+#
+# Re-running this script will REPOINT the scheduler back to the SNS
+# topic, undoing the SFN setup. Run setup-step-function.sh after this
+# if you want to restore SFN-driven cron behavior.
+#
 # Topic policy allows scheduler.amazonaws.com to sns:Publish (constrained by
 # aws:SourceAccount per the aws-eventbridge-scheduler-lambda pattern's
 # confused-deputy hardening).
