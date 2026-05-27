@@ -114,9 +114,16 @@ class SupabaseStore:
         topic: str,
         items_with_score: Iterable[tuple[Item, float | None]],
     ) -> int:
+        # Scorer output goes into metadata.regex_score; the canonical `relevance`
+        # column is left NULL so the rescore-llm Lambda owns that field. UI sorts
+        # on `relevance`, so until rescore catches up new items sort to the
+        # bottom (the deliberate transition state from the integration plan).
         now = datetime.now(timezone.utc)
         rows = []
-        for item, relevance in items_with_score:
+        for item, score in items_with_score:
+            metadata = dict(item.metadata or {})
+            if score is not None:
+                metadata["regex_score"] = score
             rows.append((
                 topic,
                 item.id,
@@ -128,8 +135,8 @@ class SupabaseStore:
                 item.content or None,
                 _ts_to_dt(item.published_at),
                 now,
-                relevance,
-                Json(item.metadata or {}),
+                None,                       # relevance · rescore-llm fills this
+                Json(metadata),
             ))
         if not rows:
             return 0
@@ -235,10 +242,15 @@ class RestWriter:
         topic: str,
         items_with_score: Iterable[tuple[Item, float | None]],
     ) -> int:
+        # Same swap as SupabaseStore.upsert_items: regex score → metadata,
+        # relevance left NULL for rescore-llm to fill.
         now_iso = datetime.now(timezone.utc).isoformat()
         rows = []
-        for item, relevance in items_with_score:
+        for item, score in items_with_score:
             pub_dt = _ts_to_dt(item.published_at)
+            metadata = dict(item.metadata or {})
+            if score is not None:
+                metadata["regex_score"] = score
             rows.append({
                 "topic": topic,
                 "id": item.id,
@@ -250,8 +262,8 @@ class RestWriter:
                 "content": item.content or None,
                 "published_at": pub_dt.isoformat() if pub_dt else None,
                 "fetched_at": now_iso,
-                "relevance": relevance,
-                "metadata": item.metadata or {},
+                "relevance": None,           # rescore-llm fills this
+                "metadata": metadata,
             })
         return self._upsert("items", "topic,id", rows)
 
