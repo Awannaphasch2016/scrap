@@ -1,0 +1,41 @@
+# Image for the rescore-llm Lambda — runs `claude -p` against each item.
+#
+# Diverges from the main Dockerfile in two ways:
+#   1. Adds Node.js + the @anthropic-ai/claude-code CLI.
+#   2. Sets HOME=/tmp/home so the CLI can write rotated OAuth credentials
+#      (Lambda's /var/task is read-only; the credentials file rotates).
+#
+# Auth credentials are NOT baked into the image. They're pulled from Doppler
+# at invocation time via curator/core/claude_credentials.py:pull_credentials_to_home,
+# materialized to $HOME/.claude/.credentials.json, then push-back-rotated in
+# the handler's finally block. Same pattern as NotebookLM uses for cookies.
+
+FROM public.ecr.aws/lambda/python:3.12
+
+# --- Python deps ---
+COPY lambda/requirements.txt ${LAMBDA_TASK_ROOT}/
+RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
+
+# --- Node.js 20 + claude CLI ---
+# Use the AL2023 official nodejs RPM via dnf (cleaner than the NodeSource setup
+# script on amazon-linux-based images).
+RUN dnf install -y nodejs npm && \
+    npm install -g @anthropic-ai/claude-code && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf
+# Verify install at build time so a broken layer fails fast instead of at first
+# invocation.
+RUN claude --version
+
+# --- Writable HOME for credentials rotation ---
+# /var/task is read-only. /tmp is writable but lost between containers.
+# Set HOME=/tmp/home and create the .claude/ subdir so the cold-start pull
+# has a target directory ready.
+ENV HOME=/tmp/home
+RUN mkdir -p /tmp/home/.claude
+
+# --- Curator source ---
+COPY curator/ ${LAMBDA_TASK_ROOT}/curator/
+COPY lambda/rescore_handler.py ${LAMBDA_TASK_ROOT}/
+
+CMD ["rescore_handler.lambda_handler"]
