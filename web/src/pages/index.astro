@@ -263,7 +263,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     color: var(--fg-muted);
     margin: 0.2rem 0;
   }
-  .item-meta .score { color: #2ecc71; font-weight: 600; margin-right: 0.4rem; }
+  .item-meta .score { color: #2ecc71; font-weight: 600; }
+  .item-meta .score-label { color: var(--fg-muted); font-weight: 400; margin-right: 0.15rem; }
+  .item-meta .regex-score { color: var(--fg-muted); font-weight: 400; margin-right: 0.4rem; }
+  .item-meta .score-missing { color: var(--fg-muted); font-weight: 400; opacity: 0.6; }
   .item-meta .topic-tag {
     background: var(--bg);
     border: 1px solid var(--border);
@@ -615,7 +618,20 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     const md = (item.metadata ?? {}) as Record<string, unknown>;
 
     const meta: string[] = [];
-    if (item.relevance != null) meta.push(`<span class="score">${item.relevance.toFixed(1)}</span>`);
+    // Render BOTH scores so ranking is auditable at a glance: LLM (green, the
+    // sort key) and regex (muted, the legacy keyword score). "—" when missing
+    // so it's obvious which scorer hasn't run for this item.
+    const llmCell = item.relevance != null
+      ? `<span class="score">${item.relevance.toFixed(1)}</span>`
+      : `<span class="score-missing">—</span>`;
+    const regexRaw = md.regex_score;
+    const regexCell = typeof regexRaw === 'number'
+      ? `<span class="regex-score">${regexRaw.toFixed(1)}</span>`
+      : `<span class="score-missing">—</span>`;
+    meta.push(
+      `<span class="score-label">LLM</span>${llmCell}` +
+      ` <span class="score-label">·  regex</span> ${regexCell}`,
+    );
     meta.push(`<span class="topic-tag">${escape(topicLabel(item.topic))}</span>`);
     meta.push(escape(sourceDisplayName(item.topic, item.source_id)));
     meta.push(humanAge(item.published_at, nowMs));
