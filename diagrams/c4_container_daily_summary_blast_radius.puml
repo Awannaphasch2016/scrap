@@ -1,0 +1,85 @@
+@startuml C4_Container_DailySummary_BlastRadius
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Container.puml
+
+title Blast radius — daily NotebookLM summary (L2 Container)\nWhat's NEW, MODIFIED, INDIRECTLY-AFFECTED, and UNCHANGED when we add the cross-topic daily summary (text + audio) to the existing daily pipeline.
+
+AddElementTag("critical", $bgColor="#FF6666", $borderColor="#990000", $fontColor="#FFFFFF", $legendText="🔴 NEW — added by this plan")
+AddElementTag("high",     $bgColor="#FFB3B3", $borderColor="#B30000", $fontColor="#660000", $legendText="🚨 MODIFIED — edited by this plan")
+AddElementTag("medium",   $bgColor="#FFE0B3", $borderColor="#CC8800", $fontColor="#663300", $legendText="🟡 INDIRECTLY-AFFECTED — behavior shifts without local code change")
+AddElementTag("low",      $bgColor="#E0F0FF", $borderColor="#3366AA", $fontColor="#003366", $legendText="✅ UNCHANGED — already in production")
+AddElementTag("external", $bgColor="#F2F2F2", $borderColor="#666666", $fontColor="#333333", $legendText="External — outside the system")
+AddRelTag("blast", $lineColor="#B30000", $textColor="#B30000", $lineStyle="dashed")
+AddRelTag("static", $lineColor="#888888", $textColor="#888888")
+
+' ===== People + external =====
+Person(operator, "Operator (you)", "Triggers manual or scheduled runs. Consumes the daily summary in the browser; downloads audio separately.", $tags="low")
+System_Ext(notebooklm, "NotebookLM (Google)", "Cloud notebook + audio-overview service. Already used for per-topic uploads; now also for ephemeral create/generate/delete cycles.", $tags="medium")
+System_Ext(anthropic, "Anthropic Claude API", "Used by rescore-llm via claude CLI. Unchanged path.", $tags="external")
+System_Ext(reddit, "Reddit / HN / RemoteOK / …", "Scrape data sources. Unchanged.", $tags="external")
+
+' ===== AWS boundary =====
+System_Boundary(aws, "AWS · ap-southeast-1") {
+    Container(eventbridge, "EventBridge Scheduler", "cron(0 17 * * ? *) UTC = midnight ICT", "Unchanged — same daily tick targeting the state machine.", $tags="low")
+    Container(sns, "SNS topic · curator-daily-tick", "manual-trigger path", "Unchanged — still subscribed by scrape Lambdas for ad-hoc 'fire just the scrape side'.", $tags="low")
+    Container(sfn, "Step Functions · curator-daily", "State machine · STANDARD", "MODIFIED: insert a PostScrape Parallel block after the existing scrape Parallel. New branch invokes generate-summary alongside rescore-llm; Catch on PostScrape so a single-branch failure doesn't fail the whole execution.", $tags="high")
+    Container(scrape_news, "Lambda scrape-news-curator", "Python container", "Unchanged code path. Still ingests items + writes regex score into metadata.regex_score.", $tags="low")
+    Container(scrape_jobs, "Lambda scrape-job-curator", "Python container", "Unchanged code path.", $tags="low")
+    Container(rescore, "Lambda rescore-llm", "Python container with claude CLI baked in", "Unchanged — still scores jobs items via claude -p in parallel.", $tags="low")
+    Container(summary, "Lambda generate-summary", "Python container · async asyncio handler", "NEW: pulls today's items, creates ephemeral NotebookLM notebook, uploads, fans out (generate_report || generate_audio), downloads both, writes text→DB+S3 and audio→S3, deletes notebook.", $tags="critical")
+    Container(image, "ECR · scrape-news-curator (shared image)", "Docker image · python:3.12 + notebooklm-py + tailscaled", "MODIFIED: one new COPY line (lambda/summary_handler.py). No new deps · notebooklm-py is already installed for the existing per-topic upload steps.", $tags="high")
+}
+
+' ===== Supabase boundary =====
+System_Boundary(supabase, "Supabase project · knowledgebase") {
+    Container(postgrest, "PostgREST (Door A)", "Supabase edge", "Unchanged endpoint. Two new schema objects served through it (read for UI, write for summary Lambda).", $tags="low")
+    ContainerDb(items, "curator.items", "Postgres table", "Unchanged. Read by generate-summary to assemble today's source markdown.", $tags="low")
+    ContainerDb(summaries, "curator.daily_summaries", "Postgres table · NEW", "NEW: one row per day with text_md, audio_s3_key, notebook_id, item_count. PRIMARY KEY (date); UPSERT on re-runs. UI's newsfeed view reads from here.", $tags="critical")
+}
+
+' ===== S3 boundary =====
+System_Boundary(s3, "S3") {
+    Container(profile_bucket, "curator-profiles-755283537543", "S3 bucket", "Unchanged. Profile paragraph for rescore-llm.", $tags="low")
+    Container(feed_bucket, "FEED_BUCKET · summary/ prefix", "S3 bucket + new prefix", "MODIFIED: new summary/YYYY-MM-DD.mp4 + summary/YYYY-MM-DD.md objects under existing bucket; new public-read policy on the summary/ prefix so the UI's audio download link works.", $tags="high")
+}
+
+' ===== Vercel =====
+Container_Ext(vercel, "Vercel curator UI", "Astro static site", "MODIFIED: newsfeed view stops rendering item cards and starts fetching the latest daily_summaries row · text rendered via inlined `marked`; audio surfaced as a download link.", $tags="high")
+
+' ===== Existing static structure (unchanged context · gray) =====
+Rel(operator, eventbridge, "Sets schedule / can publish to SNS for manual scrape-only triggers", $tags="static")
+Rel(eventbridge, sfn, "Daily invoke (unchanged target)", $tags="static")
+Rel(operator, sns, "Manual publish for ad-hoc scrape", $tags="static")
+Rel(sns, scrape_news, "fan-out (manual path)", $tags="static")
+Rel(sns, scrape_jobs, "fan-out (manual path)", $tags="static")
+Rel(sfn, scrape_news, "Parallel.Scrape invoke", $tags="static")
+Rel(sfn, scrape_jobs, "Parallel.Scrape invoke", $tags="static")
+Rel(sfn, rescore, "PostScrape.Parallel.Rescore invoke", $tags="static")
+Rel(rescore, anthropic, "claude -p · HTTPS", $tags="static")
+Rel(scrape_news, reddit, "HTTPS via proxy chain", $tags="static")
+Rel(scrape_jobs, reddit, "HTTPS via proxy chain", $tags="static")
+Rel(scrape_news, postgrest, "POST /rest/v1/items (relevance=null, regex in metadata)", $tags="static")
+Rel(scrape_jobs, postgrest, "POST /rest/v1/items", $tags="static")
+Rel(rescore, postgrest, "GET + PATCH /rest/v1/items", $tags="static")
+Rel(postgrest, items, "INSERT/UPDATE", $tags="static")
+Rel(rescore, profile_bucket, "GET jobs_profile.md", $tags="static")
+Rel(image, scrape_news, "ImageUri", $tags="static")
+Rel(image, scrape_jobs, "ImageUri", $tags="static")
+
+' ===== Blast-radius edges (dashed red · numbered, with the why) =====
+Rel(sfn, summary, "1. NEW: PostScrape.Parallel.GenerateSummary invoke", $tags="blast")
+Rel(image, summary, "2. NEW: same image, new CMD (summary_handler.lambda_handler)", $tags="blast")
+Rel(summary, postgrest, "3. NEW: GET items fetched in last ~6h (cross-topic)", $tags="blast")
+Rel(summary, notebooklm, "4. NEW: create notebook → add_text → generate_report || generate_audio → download both → delete notebook (single Lambda execution)", $tags="blast")
+Rel(summary, postgrest, "5. NEW: UPSERT curator.daily_summaries (text_md, audio_s3_key, notebook_id, item_count)", $tags="blast")
+Rel(postgrest, summaries, "6. NEW table populated daily", $tags="blast")
+Rel(summary, feed_bucket, "7. NEW: PUT summary/YYYY-MM-DD.mp4 + .md", $tags="blast")
+Rel(vercel, postgrest, "8. MODIFIED: newsfeed view now queries daily_summaries instead of items", $tags="blast")
+Rel(vercel, feed_bucket, "9. NEW: <a href> to summary/YYYY-MM-DD.mp4 audio download", $tags="blast")
+
+' Keep existing per-topic uploads visible for context (they continue · separate from the new ephemeral cycle)
+Rel(scrape_news, notebooklm, "Unchanged: per-topic upload to persistent notebook (NOTEBOOKLM_NOTEBOOK_ID)", $tags="static")
+Rel(scrape_jobs, notebooklm, "Unchanged: per-topic upload to persistent notebook (JOBS_NOTEBOOK_ID)", $tags="static")
+
+SHOW_LEGEND()
+@enduml
