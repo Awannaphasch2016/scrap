@@ -33,6 +33,7 @@ AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 NEWS_FN="arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:scrape-news-curator"
 JOBS_FN="arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:scrape-job-curator"
 RESC_FN="arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:rescore-llm"
+SUMM_FN="arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:generate-summary"
 echo "    account=${AWS_ACCOUNT_ID} region=${AWS_REGION}"
 echo "    state machine=${SFN_NAME}"
 
@@ -65,7 +66,8 @@ cat > "$TMP_SFN_POLICY" <<JSON
     "Resource": [
       "${NEWS_FN}", "${NEWS_FN}:*",
       "${JOBS_FN}", "${JOBS_FN}:*",
-      "${RESC_FN}", "${RESC_FN}:*"
+      "${RESC_FN}", "${RESC_FN}:*",
+      "${SUMM_FN}", "${SUMM_FN}:*"
     ]
   }]
 }
@@ -82,7 +84,7 @@ echo "==> State machine definition"
 TMP_DEF=$(mktemp)
 cat > "$TMP_DEF" <<JSON
 {
-  "Comment": "Daily curator pipeline · parallel scrape, then LLM rescore",
+  "Comment": "Daily curator pipeline · parallel scrape, then parallel(rescore-llm, generate-summary)",
   "StartAt": "Scrape",
   "States": {
     "Scrape": {
@@ -119,27 +121,60 @@ cat > "$TMP_DEF" <<JSON
           }
         }
       ],
-      "Next": "Rescore",
-      "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "RescoreAnyway"}]
+      "Next": "PostScrape",
+      "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "PostScrapePartial"}]
     },
-    "Rescore": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": {
-        "FunctionName": "${RESC_FN}",
-        "Payload": {"topic": "jobs", "trigger": "post-scrape"}
-      },
-      "Retry": [{"ErrorEquals": ["States.ALL"], "MaxAttempts": 1}],
-      "End": true
+    "PostScrape": {
+      "Type": "Parallel",
+      "Comment": "Run rescore and summary in parallel · both query DB independently",
+      "Branches": [
+        {
+          "StartAt": "Rescore",
+          "States": {
+            "Rescore": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${RESC_FN}",
+                "Payload": {"topic": "jobs", "trigger": "post-scrape"}
+              },
+              "Retry": [{"ErrorEquals": ["States.ALL"], "MaxAttempts": 1}],
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "GenerateSummary",
+          "States": {
+            "GenerateSummary": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${SUMM_FN}",
+                "Payload": {"trigger": "post-scrape"}
+              },
+              "Retry": [{"ErrorEquals": ["States.ALL"], "MaxAttempts": 1}],
+              "End": true
+            }
+          }
+        }
+      ],
+      "End": true,
+      "Catch": [{"ErrorEquals": ["States.ALL"], "Next": "PartialSuccess"}]
     },
-    "RescoreAnyway": {
-      "Comment": "Even if a scraper failed, rescore whatever did land.",
+    "PostScrapePartial": {
+      "Comment": "Scrape branch failed wholesale · still run rescore over whatever did land. Summary skipped (likely no items).",
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
       "Parameters": {
         "FunctionName": "${RESC_FN}",
         "Payload": {"topic": "jobs", "trigger": "post-scrape-partial"}
       },
+      "End": true
+    },
+    "PartialSuccess": {
+      "Comment": "Either Rescore or GenerateSummary failed · execution still ends green so the other branch's output is preserved.",
+      "Type": "Pass",
       "End": true
     }
   }

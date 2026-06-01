@@ -276,6 +276,49 @@ import BaseLayout from '../layouts/BaseLayout.astro';
     color: var(--fg);
   }
   .item-meta .comment-count { color: var(--accent-dim); }
+
+  /* Daily summary view (newsfeed) */
+  .daily-summary {
+    padding: 1.2rem 1.4rem;
+    background: var(--bg-elev);
+    border-radius: 6px;
+    border-left: 3px solid var(--accent);
+    margin: 0.5rem 0 1rem;
+  }
+  .daily-summary .summary-meta {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--fg-muted);
+    margin-bottom: 1rem;
+  }
+  .daily-summary .audio-link {
+    display: inline-block;
+    margin-bottom: 1.2rem;
+    padding: 0.5rem 0.9rem;
+    background: var(--bg);
+    border: 1px solid var(--accent-dim);
+    border-radius: 4px;
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    text-decoration: none;
+  }
+  .daily-summary .audio-link:hover { background: var(--accent-dim); color: var(--bg); }
+  .daily-summary .summary-text { line-height: 1.65; font-size: 0.95rem; color: var(--fg); }
+  .daily-summary .summary-text h1,
+  .daily-summary .summary-text h2,
+  .daily-summary .summary-text h3 { color: var(--accent); margin: 1.2rem 0 0.5rem; }
+  .daily-summary .summary-text h1 { font-size: 1.3rem; }
+  .daily-summary .summary-text h2 { font-size: 1.1rem; }
+  .daily-summary .summary-text h3 { font-size: 1rem; }
+  .daily-summary .summary-text p { margin: 0.5rem 0; }
+  .daily-summary .summary-text ul, .daily-summary .summary-text ol { margin: 0.5rem 0; padding-left: 1.5rem; }
+  .daily-summary .summary-text li { margin: 0.2rem 0; }
+  .daily-summary .summary-text code {
+    background: var(--bg); padding: 0.1rem 0.4rem; border-radius: 3px;
+    font-family: var(--mono); font-size: 0.85em;
+  }
+  .daily-summary .summary-text strong { color: var(--accent); }
   .item-tags {
     margin-top: 0.3rem;
     font-family: var(--mono);
@@ -325,6 +368,9 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
 </style>
 
+<!-- marked@13 · markdown → HTML for the daily-summary view. Async, ~30KB gz. -->
+<script src="https://cdn.jsdelivr.net/npm/marked@13.0.3/marked.min.js"></script>
+
 <script>
   import { makeSupabase } from '../lib/supabase';
 
@@ -345,6 +391,8 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   const WINDOW_HOURS  = 36;
   const NEWSFEED_SIZE = 15;
   const SILENT_MS     = 7 * 86400 * 1000;
+  const FEED_BUCKET   = "scrape-news-curator-feeds-755283537543";
+  const REGION        = "ap-southeast-1";
 
   const supabase = makeSupabase();
 
@@ -694,6 +742,12 @@ import BaseLayout from '../layouts/BaseLayout.astro';
   }
 
   function render(): void {
+    // newsfeed view is the synthesized daily summary, not the ranked card list.
+    // (Other views — all / scrape / jobs / per-source — still render cards.)
+    if (selection.kind === 'newsfeed') {
+      void renderDailySummary();
+      return;
+    }
     const nowMs = Date.now();
     const items = visibleItems();
     itemsListEl.innerHTML = '';
@@ -703,6 +757,54 @@ import BaseLayout from '../layouts/BaseLayout.astro';
       for (const item of items) itemsListEl.appendChild(renderItem(item, nowMs));
     }
     syncHeader(items.length);
+  }
+
+  type Summary = {
+    date: string; text_md: string; audio_s3_key: string | null;
+    item_count: number; generated_at: string;
+  };
+
+  async function renderDailySummary(): Promise<void> {
+    itemsListEl.innerHTML = '<div class="loading">loading today\'s digest…</div>';
+    syncHeader(0);
+    const { data, error } = await supabase
+      .from('daily_summaries')
+      .select('date,text_md,audio_s3_key,item_count,generated_at')
+      .order('date', { ascending: false })
+      .limit(1)
+      .maybeSingle<Summary>();
+
+    if (error) {
+      itemsListEl.innerHTML = `<div class="empty">summary load error: ${escape(error.message)}</div>`;
+      return;
+    }
+    if (!data) {
+      itemsListEl.innerHTML = `<div class="empty">no summary generated yet · the daily SFN tick lands tonight at midnight ICT</div>`;
+      return;
+    }
+
+    // Wait for marked to load if it hasn't yet (CDN script).
+    const mk = (window as any).marked;
+    const textHtml = mk?.parse ? mk.parse(data.text_md) : `<pre>${escape(data.text_md)}</pre>`;
+    const audioUrl = data.audio_s3_key
+      ? `https://${FEED_BUCKET}.s3.${REGION}.amazonaws.com/${data.audio_s3_key}`
+      : null;
+
+    itemsListEl.innerHTML = `
+      <article class="daily-summary">
+        <div class="summary-meta">
+          generated ${humanAge(data.generated_at, Date.now())} ·
+          ${data.item_count} item${data.item_count === 1 ? '' : 's'} sourced ·
+          ${escape(data.date)}
+        </div>
+        ${audioUrl ? `<a class="audio-link" href="${audioUrl}" target="_blank" rel="noopener">▶ download audio overview (~15min podcast)</a>` : ''}
+        <div class="summary-text">${textHtml}</div>
+      </article>
+    `;
+    itemsTitleEl.textContent = 'newsfeed';
+    breadcrumbEl.innerHTML = 'today\'s digest · NotebookLM-generated';
+    itemsMetaEl.textContent = `${data.item_count} item${data.item_count === 1 ? '' : 's'}`;
+    sortToggleEl.classList.add('hidden');
   }
 
   sortRelEl.addEventListener('change', () => {

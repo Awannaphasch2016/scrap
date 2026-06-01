@@ -15,6 +15,7 @@ COPY curator/ ${LAMBDA_TASK_ROOT}/curator/
 COPY feed_prompt.py ${LAMBDA_TASK_ROOT}/
 COPY lambda/handler.py ${LAMBDA_TASK_ROOT}/
 COPY lambda/job_handler.py ${LAMBDA_TASK_ROOT}/
+COPY lambda/summary_handler.py ${LAMBDA_TASK_ROOT}/
 
 # Default CMD = news handler so the existing scrape-news-curator Lambda keeps
 # working unchanged. The scrape-job-curator function overrides this via
