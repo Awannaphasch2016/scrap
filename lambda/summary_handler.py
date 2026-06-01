@@ -130,17 +130,27 @@ def _materialize_cookies():
 # ---- The actual async pipeline ----
 
 async def _generate_text_and_audio(client, notebook_id: str) -> tuple[str, str]:
-    """Fan out: generate notes + audio in parallel, return (text, audio_path)."""
+    """Fan out: generate notes + audio in parallel, return (text, audio_path).
+
+    Audio generation routinely takes 5-10 min server-side; the library's
+    default wait_for_completion timeout (300s) is too short. Override per
+    artifact: 300s for the report (typically under a minute), 720s (12 min)
+    for the audio. Lambda's own timeout is 900s, leaving slack for downloads.
+    """
 
     async def _do_text() -> str:
         status = await client.artifacts.generate_report(notebook_id)
-        await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+        await client.artifacts.wait_for_completion(
+            notebook_id, status.task_id, timeout=300.0,
+        )
         await client.artifacts.download_report(notebook_id, str(TMP_TEXT_PATH))
         return TMP_TEXT_PATH.read_text(encoding="utf-8")
 
     async def _do_audio() -> str:
         status = await client.artifacts.generate_audio(notebook_id)
-        await client.artifacts.wait_for_completion(notebook_id, status.task_id)
+        await client.artifacts.wait_for_completion(
+            notebook_id, status.task_id, timeout=720.0,
+        )
         await client.artifacts.download_audio(notebook_id, str(TMP_AUDIO_PATH))
         return str(TMP_AUDIO_PATH)
 
