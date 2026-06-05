@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hyperbrowser UI state graph · planning for state-routed wrapper (rung 2)</title>
+<link rel="stylesheet" href="../diagrams/viewer/diagram-viewer.css">
+<style>
+  :root {
+    --surface: #14171c;
+    --surface-2: #1c2026;
+    --surface-3: #232830;
+    --text: #e8eaed;
+    --muted: #9aa3ad;
+    --border: #2a2f37;
+    --accent: #5eead4;
+    --accent-warm: #fbbf24;
+    --accent-cool: #8fd0ff;
+    --accent-cat: #c8a6ff;
+    --good: #2ecc71;
+    --bad: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 24px 64px; font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--text); background: var(--surface); max-width: 1180px; margin-inline: auto; }
+  h1 { font-size: 1.7rem; margin: 1.4rem 0 0.5rem; }
+  h2 { font-size: 1.25rem; margin-top: 2.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h2 .lvl { color: var(--muted); font-size: 0.85rem; font-weight: normal; margin-left: 0.6rem; }
+  h3 { font-size: 1.05rem; margin-top: 1.6rem; color: var(--accent); }
+  .section-blurb { color: var(--muted); margin: 0.4rem 0 1rem; }
+  code { background: var(--surface-2); padding: 2px 6px; border-radius: 3px; color: var(--accent); font-size: 0.92em; }
+  a { color: var(--accent); }
+  pre.mermaid { background: #ffffff; border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin: 16px 0 24px; }
+  .callout { background: var(--surface-2); border: 1px solid var(--border); border-left: 4px solid var(--accent-warm); border-radius: 4px; padding: 12px 18px; margin: 14px 0 22px; font-size: 0.95rem; }
+  .callout strong { color: var(--accent-warm); }
+  .callout.cool { border-left-color: var(--accent-cool); }
+  .callout.cool strong { color: var(--accent-cool); }
+  .callout.good { border-left-color: var(--good); }
+  .callout.good strong { color: var(--good); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.bad strong { color: var(--bad); }
+  table.kv { width: 100%; border-collapse: collapse; margin: 14px 0 24px; font-size: 0.92rem; }
+  table.kv th, table.kv td { text-align: left; padding: 8px 12px; border: 1px solid var(--border); vertical-align: top; }
+  table.kv th { background: var(--surface-2); color: var(--text); font-weight: 600; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  table.kv td code { white-space: nowrap; }
+  .palette { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0 16px; font-size: 0.85rem; }
+  .palette span { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 3px; border: 1px solid var(--border); }
+  .palette i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
+  ul.tight li { margin-bottom: 4px; }
+</style>
+</head>
+<body>
+
+  <h1>Hyperbrowser UI state graph <span class="lvl">planning for state-routed wrapper (rung 2)</span></h1>
+
+  <p class="section-blurb">Comprehensive map of all UI states encountered (or anticipated) on the path from <code>www.hyperbrowser.ai</code> (signup entry) to <em>API key in hand</em> (extraction terminal). Built as a planning artifact: see the full graph first, then pick the minimal state set the wrapper actually needs to classify. References the architecture-choice journal entry (<code>agent-wrapper-architecture-choice-...</code>) at rung 2 — declarative state-router in Python with LLM+screenshot classification per the user's choice.</p>
+
+  <div class="callout bad">
+    <strong>⚠ Serve over HTTP.</strong> If embedding fails (Mermaid is client-side here), open via <code>./scripts/serve-diagrams.sh</code>. Double-clicking the HTML file may work for client-side Mermaid (no fetch needed) but the viewer's other features need HTTP.
+  </div>
+
+  <div class="callout cool">
+    <strong>State categories (color in diagram).</strong>
+    <div class="palette">
+      <span><i style="background:#e8f1ff;border:1px solid #3366aa"></i> 🔵 ENTRY — initial state from URL</span>
+      <span><i style="background:#fff7d6;border:1px solid #cc8800"></i> 🟡 AUTH — Google OAuth flow</span>
+      <span><i style="background:#f2eaf7;border:1px solid #6a4ba9"></i> 🟣 ONBOARDING — modal/wizard before dashboard</span>
+      <span><i style="background:#e8f5ee;border:1px solid #1c8a6a"></i> 🟢 DASHBOARD / TERMINAL — product surface / goal</span>
+      <span><i style="background:#ffb3b3;border:1px solid #b30000"></i> 🔴 FAILURE — dead-end requiring abort</span>
+      <span><i style="background:#f2f2f2;border:1px solid #666;border-style:dashed"></i> ⬜ ESCAPE — outside opencli session</span>
+    </div>
+  </div>
+
+  <h2>The complete state graph</h2>
+
+  <p class="section-blurb">Every state and transition observed (☑) or anticipated (⬚) during the signup → get-api journey. Edge labels show the user/agent action OR system event that triggers the transition. Sub-agent annotations on the right side of each edge show which agent owns that transition (signup-agent, onboarding-doer, get-api-agent, or unhandled).</p>
+
+  <pre class="mermaid">
+flowchart TB
+    Start(( )) --> ML[Marketing Landing]
+    Start --> AS[App /signup]
+    Start --> AL[App /login]
+    Start --> DM[Dashboard masked]
+
+    ML -- "click SIGN UP / LOG IN<br/>(target=_blank)" --> ET[ESCAPED TAB<br/>outside opencli session]
+    ET -- "agent can't see<br/>runaway tabs" --> Abort1((abort))
+
+    AS -- "click Continue with Google" --> GAC[Google account chooser]
+    AL -- "click Continue with Google" --> GAC
+
+    GAC -- "pick account [signup-agent]" --> GC[Google consent screen]
+    GAC -- "not signed in to Google" --> GLF[Google login email]
+    GAC -- "Google flags request" --> CC[CAPTCHA challenge]
+
+    GLF -- "email + Next" --> GPF[Google password form]
+    GPF -- "password correct, 2FA enabled" --> G2FA[Google 2FA<br/>push / TOTP / SMS]
+    GPF -- "password correct, no 2FA" --> GC
+    G2FA -- "2FA solved [unhandled]" --> GC
+
+    GC -- "Continue (first time)" --> WM[Welcome modal<br/>Let's personalize]
+    GC -- "subsequent signin" --> DM
+
+    WM -- "Let's Get Started [onboarding-doer]" --> OS1[Step 1/4 Role]
+    OS1 -- "pick role + Next" --> OS2[Step 2/4 Goals]
+    OS2 -- "pick goals + Next" --> OS3[Step 3/4 URL]
+    OS3 -- "fill URL + Next" --> OS4[Step 4/4 Discovery]
+    OS4 -- "Finish" --> SM[You're all set! modal]
+    SM -- "Close" --> DM
+
+    DM -- "click Show [get-api]" --> DR[Dashboard revealed<br/>hb_* in DOM]
+    DM -- "Show returned clipboard-only" --> COK[Copy-only key<br/>transient]
+    COK -- "retry" --> DR
+    COK -- "abort blocked" --> Abort2((abort))
+
+    DR -- "GOAL" --> Goal((extract<br/>literal key))
+
+    CC -- "abort blocked" --> Abort3((abort))
+
+    classDef entry fill:#e8f1ff,stroke:#3366aa,color:#0a2540
+    classDef auth fill:#fff7d6,stroke:#cc8800,color:#5a3a00
+    classDef onboarding fill:#f2eaf7,stroke:#6a4ba9,color:#2c1a4a
+    classDef dashboard fill:#e8f5ee,stroke:#1c8a6a,color:#0a3326,stroke-width:2px
+    classDef terminal fill:#a8e6c4,stroke:#1c8a6a,color:#0a3326,stroke-width:3px
+    classDef failure fill:#ffb3b3,stroke:#b30000,color:#400000
+    classDef escape fill:#f2f2f2,stroke:#666,color:#222,stroke-dasharray:5 3
+
+    class ML,AS,AL entry
+    class GAC,GC,GLF,GPF,G2FA auth
+    class WM,OS1,OS2,OS3,OS4,SM onboarding
+    class DM dashboard
+    class DR,Goal terminal
+    class CC,COK,Abort1,Abort2,Abort3 failure
+    class ET escape
+  </pre>
+
+  <h2>The happy path · what we actually need to classify</h2>
+
+  <p class="section-blurb">Stripping away the unanticipated branches and reducing the granularity to what the wrapper actually needs to dispatch on, the canonical journey is a short chain. The minimal classifier needs to distinguish where we ARE in this chain.</p>
+
+  <pre class="mermaid">
+flowchart LR
+    Start(( )) --> Entry[ENTRY<br/>Continue-with-Google visible]
+    Entry -- "signup-agent" --> Auth[AUTH<br/>accounts.google.com pages]
+    Auth -- "signup-agent continues" --> Onboarding[ONBOARDING<br/>modal with personalize text]
+    Onboarding -- "onboarding-doer" --> DashboardMasked[DASHBOARD masked<br/>API Key heading + asterisks]
+    DashboardMasked -- "get-api" --> KeyExtracted[KEY EXTRACTED<br/>hb_* visible in DOM]
+    KeyExtracted -- "goal" --> End((done))
+
+    classDef entry fill:#e8f1ff,stroke:#3366aa,color:#0a2540
+    classDef auth fill:#fff7d6,stroke:#cc8800,color:#5a3a00
+    classDef onboarding fill:#f2eaf7,stroke:#6a4ba9,color:#2c1a4a
+    classDef dashboard fill:#e8f5ee,stroke:#1c8a6a,color:#0a3326
+    classDef terminal fill:#a8e6c4,stroke:#1c8a6a,color:#0a3326,stroke-width:3px
+
+    class Entry entry
+    class Auth auth
+    class Onboarding onboarding
+    class DashboardMasked dashboard
+    class KeyExtracted,End terminal
+  </pre>
+
+  <h2>Proposed minimal state set for v1 classifier</h2>
+
+  <p class="section-blurb">Based on the full graph above, here's the smallest classifier output set that lets the wrapper route correctly. LLM+screenshot classification returns one of these strings; the wrapper switches on it.</p>
+
+  <table class="kv">
+    <thead>
+      <tr><th>Classifier output</th><th>Visual fingerprint (what the LLM sees in the screenshot)</th><th>Dispatch action</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>at_signup_or_login</code></td>
+        <td>App URL with a prominent "Continue with Google" / "Sign in with Google" button. Could be /signup or /login (both look similar)</td>
+        <td>→ <code>signup_agent.py</code> (runs OAuth click-through; works for both signup and signin since UI is identical)</td>
+      </tr>
+      <tr>
+        <td><code>in_google_oauth</code></td>
+        <td>URL contains <code>accounts.google.com</code>; page shows account chooser, consent, or password prompt</td>
+        <td>→ <code>signup_agent.py</code> continues (the OAuth flow spans multiple Google pages; signup-agent handles all of them internally)</td>
+      </tr>
+      <tr>
+        <td><code>in_onboarding</code></td>
+        <td>App URL with a modal (<code>role="dialog"</code>) covering most of the page; modal text mentions "Welcome", "personalize", "Step N of M", or has a "Get Started" / "Finish" button</td>
+        <td>→ <code>onboarding_doer_agent.py</code></td>
+      </tr>
+      <tr>
+        <td><code>at_dashboard_masked_key</code></td>
+        <td>App dashboard (no modal); visible "API Key" heading; key shown as <code>***********</code> or <code>•••••••</code></td>
+        <td>→ <code>get_api_agent.py</code></td>
+      </tr>
+      <tr>
+        <td><code>at_dashboard_with_visible_key</code></td>
+        <td>App dashboard; key shown as plain text matching <code>hb_[a-z0-9]+</code></td>
+        <td>→ extract directly via state-read; no sub-agent needed</td>
+      </tr>
+      <tr>
+        <td><code>blocked_external_gate</code></td>
+        <td>Any of: captcha, paywall, account-locked banner, email-verification required, 2FA challenge, payment form</td>
+        <td>→ declare disposition <code>blocked</code>; abort with the specific gate in summary</td>
+      </tr>
+      <tr>
+        <td><code>unknown</code></td>
+        <td>None of the above match — page doesn't resemble any expected state</td>
+        <td>→ declare disposition <code>failed</code>; abort with screenshot attachment for diagnosis</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Why exactly seven states (not more, not fewer)</h3>
+
+  <ul class="tight">
+    <li><strong>One per sub-agent</strong> — each of our three existing sub-agents (signup, onboarding-doer, get-api) needs its own dispatch trigger.</li>
+    <li><strong>Plus "Google OAuth in flight"</strong> — distinct from "at_signup_or_login" because signup-agent's ReAct loop spans multiple Google pages; we want the classifier to recognize "still in OAuth" and NOT re-dispatch signup-agent (which already owns it).</li>
+    <li><strong>Plus "visible key"</strong> — if the key is already in DOM (e.g., after a prior reveal that we didn't clean up), we don't even need get-api-agent; direct extraction is free.</li>
+    <li><strong>Plus "blocked external gate"</strong> — clean abort path for captcha/paywall/etc. that can't be auto-resolved.</li>
+    <li><strong>Plus "unknown"</strong> — escape hatch for unanticipated states; logs the screenshot for offline diagnosis.</li>
+  </ul>
+
+  <h2>Outer-loop semantics</h2>
+
+  <p class="section-blurb">The wrapper repeatedly observes state and dispatches, until terminal state or guard fires.</p>
+
+  <pre class="mermaid">
+flowchart TB
+    Start([wrapper starts]) --> Observe[screenshot +<br/>opencli state]
+    Observe --> Classify{LLM classify}
+    Classify -- at_signup_or_login --> Dispatch1[run signup_agent]
+    Classify -- in_google_oauth --> Dispatch1
+    Classify -- in_onboarding --> Dispatch2[run onboarding_doer]
+    Classify -- at_dashboard_masked_key --> Dispatch3[run get_api]
+    Classify -- at_dashboard_with_visible_key --> Extract[extract from<br/>state directly]
+    Classify -- blocked_external_gate --> Abort1[declare blocked<br/>+ abort]
+    Classify -- unknown --> Abort2[declare failed<br/>+ abort with screenshot]
+    Dispatch1 --> CheckGuard{same state<br/>3 iterations?}
+    Dispatch2 --> CheckGuard
+    Dispatch3 --> CheckGuard
+    CheckGuard -- no --> Observe
+    CheckGuard -- loop detected --> Abort3[declare failed<br/>+ abort]
+    Extract --> Persist[persist key +<br/>declare done]
+    Persist --> End([wrapper exits 0])
+    Abort1 --> End
+    Abort2 --> End
+    Abort3 --> End
+
+    classDef start fill:#e8f1ff,stroke:#3366aa,color:#0a2540
+    classDef terminal fill:#a8e6c4,stroke:#1c8a6a,color:#0a3326
+    classDef abort fill:#ffb3b3,stroke:#b30000,color:#400000
+    classDef decision fill:#fff7d6,stroke:#cc8800,color:#5a3a00
+    classDef action fill:#f2eaf7,stroke:#6a4ba9,color:#2c1a4a
+
+    class Start,End start
+    class Persist terminal
+    class Abort1,Abort2,Abort3 abort
+    class Classify,CheckGuard decision
+    class Dispatch1,Dispatch2,Dispatch3,Extract,Observe action
+  </pre>
+
+  <h2>Cost &amp; latency estimate</h2>
+
+  <p class="section-blurb">LLM+screenshot classifier vs regex-based, per outer-loop iteration.</p>
+
+  <table class="kv">
+    <thead>
+      <tr><th>Approach</th><th>Cost/classification</th><th>Latency/classification</th><th>Outer-loop overhead total (4-7 iterations typical)</th><th>Tradeoff</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>LLM+screenshot (chosen)</td>
+        <td>~$0.02 (vision-capable model, single screenshot input)</td>
+        <td>~3-5s per call</td>
+        <td>+~$0.10-0.15 + 15-30s on top of sub-agent costs</td>
+        <td>Robust to UI changes; no regex maintenance per-site</td>
+      </tr>
+      <tr>
+        <td>Regex on opencli state (alternative)</td>
+        <td>$0</td>
+        <td>&lt;100ms</td>
+        <td>+$0 + ~1s</td>
+        <td>Cheaper but brittle to DOM restructures; per-site regex maintenance</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="section-blurb">For a single tool the difference is small. For 5+ tools the cumulative regex-maintenance burden tips toward LLM. Tradeoff favors LLM at scale — confirmed by the user's choice.</p>
+
+  <h2>Decision checkpoints before implementation</h2>
+
+  <ol>
+    <li><strong>Lock the 7-state set</strong> — does the proposed set cover everything you want classified? Anything to add (e.g., explicit "at_settings_subpage" for tools whose key lives on a sub-route)? Drop (e.g., merge <code>at_signup_or_login</code> + <code>in_google_oauth</code> since same sub-agent handles both)?</li>
+    <li><strong>Pick the vision model</strong> — Claude (via <code>claude -p</code> with image input) vs OpenAI vision vs Gemini. Claude-via-claude-p keeps us on a single LLM provider and reuses existing auth.</li>
+    <li><strong>Screenshot capture mechanism</strong> — <code>opencli browser &lt;sess&gt; screenshot &lt;path&gt;</code> already works; just call it before each LLM classification.</li>
+    <li><strong>Classifier prompt design</strong> — single-call returning JSON <code>{state, confidence, evidence}</code>. Evidence string for the trace.</li>
+    <li><strong>Outer-loop max iterations</strong> — propose 10 (vs the 15 inside each sub-agent's inner loop). Hard cap to prevent runaway.</li>
+    <li><strong>State-loop guard</strong> — if classifier returns same state 3 outer iterations in a row, abort. Belt-and-braces over each sub-agent's own internal loop detection.</li>
+  </ol>
+
+  <p class="section-blurb">Once 1-6 are locked, the implementation is ~120 lines refactor of <code>hyperbrowser_signup.py</code>. The 3 sub-agent scripts stay untouched — only the wrapper changes.</p>
+
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js"></script>
+<script src="../diagrams/viewer/diagram-viewer.js" defer></script>
+</body>
+</html>
