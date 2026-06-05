@@ -1,0 +1,82 @@
+@startuml C4_Component_AgentCore_Chassis
+!include ./lib/C4_Component.puml
+
+title L3 Component — agent_core.py chassis internals\nThe shared loop that all chassis-native sub-agents inherit. ~253 lines, owns sensor + policy + actuator + trace.
+
+AddElementTag("new",      $bgColor="#e8f5ee", $borderColor="#1c8a6a", $fontColor="#15181d", $legendText="🟢 NEW — added by this plan (none in chassis; chassis is KEPT)")
+AddElementTag("kept",     $bgColor="#ffffff", $borderColor="#3366AA", $fontColor="#003366", $legendText="🔵 KEPT — already in agent_core.py")
+AddElementTag("entry",    $bgColor="#e8f5ee", $borderColor="#1c8a6a", $fontColor="#15181d", $legendText="🟢 ENTRY POINT — what bodies call")
+AddElementTag("external", $bgColor="#F2F2F2", $borderColor="#666666", $fontColor="#333333", $legendText="External")
+
+Container_Boundary(agent_core, "agent_core.py — the chassis (Python module, ~253 lines)") {
+
+  ' Configuration substrate
+  Component(agent_config, "AgentConfig", "@dataclass", "Fields: name, goal, extra_rules, session, max_steps, initial_settle_s, post_click_sleep_s, output_dir. The per-agent specialization vessel.", $tags="kept")
+  Component(base_prompt, "BASE_PROMPT", "str constant", "Universal system prompt: action vocabulary, JSON envelope schema, universal rules (no-hallucinate indices, wait-after-click, etc.).", $tags="kept")
+  Component(valid_actions, "_VALID_ACTIONS", "set[str]", "click / fill / select / keys / wait_time / wait_selector / done / abort", $tags="kept")
+
+  ' Main entry points
+  Component(run_agent, "run_agent(url, config, no_nav)", "function · the loop", "Doctor gate → bootstrap tab → for step in max_steps: get_state → ask_llm → execute → check done/abort → sleep. Writes trace JSON + screenshot at end.", $tags="entry")
+  Component(build_arg_parser, "build_arg_parser(description)", "function · CLI helper", "Returns ArgumentParser with [url, --session, --max-steps, --no-nav]. Each body's main() uses this for CLI surface.", $tags="entry")
+
+  ' Sensor (opencli helpers)
+  Component(doctor_ok, "doctor_ok()", "function", "opencli doctor → [OK] Connectivity?", $tags="kept")
+  Component(session_tabs, "session_tabs(session)", "function", "opencli browser <sess> tab list → [tabs] (empty if session owns nothing)", $tags="kept")
+  Component(ensure_tab, "ensure_tab(session, url)", "function", "tab new if no tabs, else open. Idempotent.", $tags="kept")
+  Component(get_state, "get_state(session)", "function", "opencli browser <sess> state · 60s timeout · returns indexed DOM as str.", $tags="kept")
+  Component(screenshot, "screenshot(session, path)", "function", "Final-state PNG capture.", $tags="kept")
+
+  ' Policy (LLM picker)
+  Component(ask_llm, "ask_llm(system_prompt, goal, state, history)", "function", "Builds prompt (system + goal + last-5 history + state) · subprocess claude -p · parses JSON action, strips ``` fences.", $tags="kept")
+  Component(fence_re, "_FENCE_RE", "regex", "Strips ```json fences from claude output.", $tags="kept")
+
+  ' Actuator (action executor)
+  Component(execute, "execute(session, act)", "function · action dispatcher", "Switch on act[action]: click | fill | select | keys | wait_time | wait_selector → opencli command. Returns truncated result.", $tags="kept")
+  Component(strip_noise, "_strip_opencli_noise(stdout)", "function", "Drops the 'Update available' footer opencli prints on every call.", $tags="kept")
+
+  ' Subprocess primitive
+  Component(_run, "_run(cmd, timeout)", "function", "Thin subprocess.run wrapper with capture + timeout. Used by every opencli call and the claude -p call.", $tags="kept")
+}
+
+System_Ext(opencli_cli, "opencli (Node CLI)", "Spawned per call", $tags="external")
+System_Ext(claude_cli, "claude (Anthropic CLI)", "Spawned per LLM call", $tags="external")
+System_Ext(bodies, "Body files (signup_agent.py, etc.)", "Import + call run_agent", $tags="external")
+
+' --- Body → entry points ---
+Rel(bodies, build_arg_parser, "args = build_arg_parser(...).parse_args()", $tags="static")
+Rel(bodies, agent_config, "config = AgentConfig(goal=GOAL, extra_rules=..., ...)", $tags="static")
+Rel(bodies, run_agent, "run_agent(args.url, config, no_nav=...)", $tags="static")
+
+' --- run_agent uses everything ---
+Rel(run_agent, doctor_ok, "step 0: health gate", $tags="static")
+Rel(run_agent, ensure_tab, "step 1: bootstrap (unless no_nav)", $tags="static")
+Rel(run_agent, get_state, "loop: read state", $tags="static")
+Rel(run_agent, ask_llm, "loop: pick action", $tags="static")
+Rel(run_agent, execute, "loop: dispatch action", $tags="static")
+Rel(run_agent, screenshot, "end: final state PNG", $tags="static")
+
+' --- ask_llm composition ---
+Rel(ask_llm, base_prompt, "composes system_prompt = BASE_PROMPT + extra_rules", $tags="static")
+Rel(ask_llm, _run, "claude -p <prompt>", $tags="static")
+Rel(ask_llm, fence_re, "strip fences before JSON parse", $tags="static")
+Rel(ask_llm, valid_actions, "validate parsed action.action in set", $tags="static")
+
+' --- execute composition ---
+Rel(execute, _run, "opencli browser <sess> <action> [args]", $tags="static")
+Rel(execute, strip_noise, "clean result before return", $tags="static")
+
+' --- opencli helpers all use _run ---
+Rel(doctor_ok, _run, "opencli doctor", $tags="static")
+Rel(session_tabs, _run, "opencli browser <sess> tab list", $tags="static")
+Rel(ensure_tab, session_tabs, "check first", $tags="static")
+Rel(ensure_tab, _run, "opencli browser <sess> tab new / open", $tags="static")
+Rel(get_state, _run, "opencli browser <sess> state", $tags="static")
+Rel(get_state, strip_noise, "clean before return", $tags="static")
+Rel(screenshot, _run, "opencli browser <sess> screenshot", $tags="static")
+
+' --- _run → external CLIs ---
+Rel(_run, opencli_cli, "subprocess.run for all opencli helpers", $tags="static")
+Rel(_run, claude_cli, "subprocess.run for ask_llm", $tags="static")
+
+SHOW_LEGEND()
+@enduml

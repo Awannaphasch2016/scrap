@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>C4 mental framework · login-agent v1 plan (Paperclip + composed role)</title>
+<link rel="stylesheet" href="../diagrams/viewer/diagram-viewer.css">
+<style>
+  :root {
+    --surface: #14171c;
+    --surface-2: #1c2026;
+    --surface-3: #232830;
+    --text: #e8eaed;
+    --muted: #9aa3ad;
+    --border: #2a2f37;
+    --accent: #5eead4;
+    --accent-warm: #fbbf24;
+    --accent-cool: #8fd0ff;
+    --accent-cat: #c8a6ff;
+    --good: #2ecc71;
+    --bad: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 24px 64px; font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--text); background: var(--surface); max-width: 1180px; margin-inline: auto; }
+  h1 { font-size: 1.7rem; margin: 1.4rem 0 0.5rem; }
+  h2 { font-size: 1.25rem; margin-top: 2.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h2 .lvl { color: var(--muted); font-size: 0.85rem; font-weight: normal; margin-left: 0.6rem; }
+  h3 { font-size: 1.05rem; margin-top: 1.6rem; color: var(--accent); }
+  .section-blurb { color: var(--muted); margin: 0.4rem 0 1rem; }
+  code { background: var(--surface-2); padding: 2px 6px; border-radius: 3px; color: var(--accent); font-size: 0.92em; }
+  a { color: var(--accent); }
+  .callout { background: var(--surface-2); border: 1px solid var(--border); border-left: 4px solid var(--accent-warm); border-radius: 4px; padding: 12px 18px; margin: 14px 0 22px; font-size: 0.95rem; }
+  .callout strong { color: var(--accent-warm); }
+  .callout.cool { border-left-color: var(--accent-cool); }
+  .callout.cool strong { color: var(--accent-cool); }
+  .callout.good { border-left-color: var(--good); }
+  .callout.good strong { color: var(--good); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.bad strong { color: var(--bad); }
+  table.kv { width: 100%; border-collapse: collapse; margin: 14px 0 24px; font-size: 0.92rem; }
+  table.kv th, table.kv td { text-align: left; padding: 8px 12px; border: 1px solid var(--border); vertical-align: top; }
+  table.kv th { background: var(--surface-2); color: var(--text); font-weight: 600; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  table.kv td code { white-space: nowrap; }
+  .palette { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0 16px; font-size: 0.85rem; }
+  .palette span { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 3px; border: 1px solid var(--border); }
+  .palette i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
+  ul.tight li { margin-bottom: 4px; }
+</style>
+</head>
+<body>
+
+  <h1>C4 mental framework · login-agent v1 plan <span class="lvl">Paperclip + composed role</span></h1>
+
+  <p class="section-blurb">Four-level zoom into the plan at <code>~/.claude/plans/setup-paperclip-for-me-swift-newell.md</code>. The diagrams answer: what's the outsider's view (L1)? what runs where (L2)? what's inside the shared chassis (L3)? how do chassis-native and shim-wrapped bodies differ in shape but match in contract (L4)?</p>
+
+  <div class="callout bad">
+    <strong>⚠ Serve over HTTP.</strong> The viewer uses <code>fetch()</code> to inline SVG, which Chromium blocks from <code>file://</code> origins. Run <code>./scripts/serve-diagrams.sh</code> from the repo root and open the printed URL. Double-clicking this HTML file produces a broken page.
+  </div>
+
+  <div class="callout cool">
+    <strong>Color palette across all four diagrams.</strong>
+    <div class="palette">
+      <span><i style="background:#e8f5ee;border:1px solid #1c8a6a"></i> 🟢 NEW — created by this plan</span>
+      <span><i style="background:#ffffff;border:1px solid #3366AA"></i> 🔵 KEPT — already in <code>scrap/scripts/</code></span>
+      <span><i style="background:#FFE0B3;border:1px solid #CC8800"></i> 🟠 WRAPPED — external script invoked as subprocess</span>
+      <span><i style="background:#F2EAF7;border:1px solid #6a4ba9"></i> 🟣 LIBRARY / COMPOSER</span>
+      <span><i style="background:#F2F2F2;border:1px solid #666"></i> External</span>
+    </div>
+  </div>
+
+  <h2>L1 — Context <span class="lvl">login-agent as a black box · who/what it talks to</span></h2>
+
+  <p class="section-blurb">The outsider's view. Anak issues tasks through Paperclip's REST API; the system drives Chrome through the auth flow at target websites, leaning on Google OAuth, Anthropic (claude -p) and OpenRouter (Gemini for browser-use), with credentials from Doppler and identity from <code>pw profile</code>.</p>
+
+  <div class="diagram-host" data-src="../diagrams/rendered/C4_Context_LoginAgent_Plan.svg">
+    <noscript><img src="../diagrams/rendered/C4_Context_LoginAgent_Plan.svg" alt="C4 L1 Context · login-agent v1 plan"></noscript>
+  </div>
+
+  <h3>What L1 settles</h3>
+  <ul class="tight">
+    <li>Two LLM channels: <code>claude -p</code> for chassis-native agents, <code>Gemini Flash Lite via OpenRouter</code> for browser-use scripts. Same external contract from outside.</li>
+    <li>Doppler is the only secret store; per-site credential conventions match each upstream wrapper's expectations.</li>
+    <li>Paperclip is treated as an external system here because L1 is about the boundary of the <em>login-agent</em>, not the orchestrator above it.</li>
+  </ul>
+
+  <h2>L2 — Container <span class="lvl">deployable / runnable units inside the system</span></h2>
+
+  <p class="section-blurb">What runs as what. The bash composer is the unit Paperclip dispatches to; it then spawns 8 sub-agent processes across two LLM stacks (opencli + claude-p for the chassis-native four, browser-use + Gemini for the three subprocess-wrapped externals). Both stacks drive the same Chrome.</p>
+
+  <div class="diagram-host" data-src="../diagrams/rendered/C4_Container_LoginAgent_Plan.svg">
+    <noscript><img src="../diagrams/rendered/C4_Container_LoginAgent_Plan.svg" alt="C4 L2 Container · login-agent v1 plan"></noscript>
+  </div>
+
+  <h3>What L2 settles</h3>
+  <ul class="tight">
+    <li>Chassis-native sub-agents share <code>agent_core.py</code> as a Python library, then talk to opencli (which talks to Chrome).</li>
+    <li>Subprocess-shim sub-agents (<code>form_fill_signup_agent.py</code>, <code>two_fa_bypass_agent.py</code>, <code>login_type_detector.py</code> partially) own NO ReAct loop themselves — they shell out to existing browser-use scripts that drive Chrome via their own session.</li>
+    <li>The composer is bash, not Python. It only does subprocess + JSON parse + branch — no LLM, no opencli of its own.</li>
+    <li>Paperclip's MCP server is included as a future control surface; v1 uses REST.</li>
+  </ul>
+
+  <h2>L3 — Component <span class="lvl">inside agent_core.py · the chassis internals</span></h2>
+
+  <p class="section-blurb">Zoom into the shared library that every chassis-native body imports. ~253 lines. Sensor (opencli helpers), policy (<code>ask_llm</code> + <code>BASE_PROMPT</code>), actuator (<code>execute</code> dispatcher), main loop (<code>run_agent</code>), one entry point per body file.</p>
+
+  <div class="diagram-host" data-src="../diagrams/rendered/C4_Component_AgentCore_Chassis.svg">
+    <noscript><img src="../diagrams/rendered/C4_Component_AgentCore_Chassis.svg" alt="C4 L3 Component · agent_core.py chassis"></noscript>
+  </div>
+
+  <h3>What L3 settles</h3>
+  <ul class="tight">
+    <li>Body files only ever interact with three entry points: <code>build_arg_parser()</code>, <code>AgentConfig(...)</code>, and <code>run_agent(...)</code>. Everything else is internal.</li>
+    <li>The only two external CLIs the chassis spawns are <code>opencli</code> (every sensor/actuator call) and <code>claude</code> (one call per loop iteration via <code>ask_llm</code>). Both go through <code>_run</code>.</li>
+    <li>v1 plan adds NOTHING to <code>agent_core.py</code> — the chassis is KEPT in its current shape. The "new in this plan" pieces are bodies and shims, not chassis modifications.</li>
+  </ul>
+
+  <h2>L4 — Class <span class="lvl">the fractal-substitution payoff visualized</span></h2>
+
+  <p class="section-blurb">The same external CLI contract (run as <code>python scripts/&lt;name&gt;.py [args]</code>, emit final-line JSON to stdout) is satisfied by two completely different internal shapes: <strong>chassis-native bodies</strong> (instantiate <code>AgentConfig</code> + call <code>run_agent</code>) and <strong>subprocess-shim bodies</strong> (shell out to a wrapped external script and parse its output). The composer dispatches both kinds identically.</p>
+
+  <div class="diagram-host" data-src="../diagrams/rendered/C4_Class_ChassisVsShimBodies.svg">
+    <noscript><img src="../diagrams/rendered/C4_Class_ChassisVsShimBodies.svg" alt="C4 L4 Class · chassis-native vs subprocess-shim bodies"></noscript>
+  </div>
+
+  <h3>What L4 settles — the principle in code form</h3>
+  <ul class="tight">
+    <li><strong>External contract sacred, internal implementation free.</strong> Composer treats every sub-agent the same: <code>subprocess.run</code> → check exit code → read last-line JSON → branch. It cannot tell which agents use the chassis and which are shims.</li>
+    <li><strong>Two stacks coexist by design.</strong> Chassis-native = opencli + claude-p (~$0.20/run, high control). Wrapped externals = browser-use + Gemini Flash Lite (~$0.01/run, less ceremony). Both ship in the same plan because each capability picks the lighter implementation it already has.</li>
+    <li><strong>v2 fan-out is a refactor, not a rewrite.</strong> Each subprocess call in the composer becomes a sibling Paperclip role with its own parent/sub-issue. The body code (chassis-native OR shim) never changes — only the dispatch layer above it.</li>
+  </ul>
+
+  <h2>Plan retrospective hooks</h2>
+
+  <table class="kv">
+    <thead>
+      <tr><th>If you forget…</th><th>look at…</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Which secrets go in which Doppler config</td><td>L1 (System_Ext for Doppler) + L2 (per-script env requirements in container blurbs)</td></tr>
+      <tr><td>What's new vs what's reused</td><td>Color across all 4 levels: green = NEW, white/blue = KEPT, orange = WRAPPED</td></tr>
+      <tr><td>What the composer's job actually is</td><td>L4 — bottom note on <code>login_agent.sh</code>; it's the only layer doing dispatch</td></tr>
+      <tr><td>Why two LLM stacks (claude-p AND OpenRouter/Gemini)</td><td>L2 — chassis-native vs shim-wrapped groups; L4 — the contract-vs-implementation distinction</td></tr>
+      <tr><td>What changes if I add a 4th form-fill site</td><td>L2 — add a new wrapped browser-use script + a case branch in <code>form_fill_signup_agent.py</code>'s <code>--site</code> dispatch. No L3 or L4 changes.</td></tr>
+      <tr><td>Where v2 fan-out happens</td><td>L4 bottom note — each composer dispatch line becomes a Paperclip parent→sub-issue edge instead</td></tr>
+    </tbody>
+  </table>
+
+  <p class="section-blurb">Sources: <code>diagrams/c4_context_login_agent_plan.puml</code>, <code>diagrams/c4_container_login_agent_plan.puml</code>, <code>diagrams/c4_component_agent_core_chassis.puml</code>, <code>diagrams/c4_class_chassis_vs_shim_bodies.puml</code>. Re-render with <code>./scripts/render-diagrams.sh</code>. Serve with <code>./scripts/serve-diagrams.sh</code>.</p>
+
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<script src="../diagrams/viewer/diagram-viewer.js" defer></script>
+</body>
+</html>

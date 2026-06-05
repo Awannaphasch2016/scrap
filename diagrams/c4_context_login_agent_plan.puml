@@ -1,0 +1,35 @@
+@startuml C4_Context_LoginAgent_Plan
+!include ./lib/C4_Context.puml
+
+title L1 Context — login-agent v1 plan\nMental framework · the system being built sits between Anak, Paperclip (control plane), and the websites being logged into.
+
+AddElementTag("new",      $bgColor="#e8f5ee", $borderColor="#1c8a6a", $fontColor="#15181d", $legendText="🟢 NEW — created or wired by this plan")
+AddElementTag("kept",     $bgColor="#ffffff", $borderColor="#3366AA", $fontColor="#003366", $legendText="🔵 KEPT — already exists in stack, reused unchanged")
+AddElementTag("wrapped",  $bgColor="#FFE0B3", $borderColor="#CC8800", $fontColor="#663300", $legendText="🟠 WRAPPED — existing external script invoked as subprocess")
+AddElementTag("external", $bgColor="#F2F2F2", $borderColor="#666666", $fontColor="#333333", $legendText="External — outside the system")
+
+Person(anak, "Anak", "Issues login-against-URL tasks through Paperclip's REST API · reads results from issue attachments.", $tags="kept")
+
+System_Boundary(login_agent_sys, "login-agent v1 system") {
+  System(login_agent, "login-agent role", "Composed role: detects login type → dispatches OAuth/form-fill → handles 2FA → handles onboarding. Implemented as ONE Paperclip role (bash composer + 8 sub-agent CLIs).", $tags="new")
+}
+
+System_Ext(paperclip, "Paperclip orchestrator", "Local Express + PGlite + React UI. The control plane that dispatches issues to login-agent.", $tags="new")
+System_Ext(targets, "Target websites", "Reddit, GitHub, Hyperbrowser, Upwork — sites being logged into. v1 dispatch is per-site (hostname → site key).", $tags="external")
+System_Ext(google_oauth, "Google OAuth (accounts.google.com)", "Consent flow for sites that offer Continue-with-Google. Browser session already signed in.", $tags="external")
+System_Ext(anthropic, "Anthropic API (claude -p)", "LLM for chassis-native agents (signup, onboarding-skipper, onboarding-doer, get-api).", $tags="kept")
+System_Ext(openrouter, "OpenRouter (Gemini Flash Lite)", "LLM for browser-use agents (rung_2, rung_4, bypass_github_oauth). Different stack, same external contract.", $tags="kept")
+System_Ext(doppler, "Doppler (scrape/dev + pullfrog/dev)", "Per-site credentials (REDDIT_*, UPWORK_*, GITHUB_*, GITHUB_TOTP_SECRET, OPENROUTER_API_KEY).", $tags="kept")
+System_Ext(pw_profile, "pw profile CLI", "Static identity digest injected into onboarding-doer as ground truth for personal facts.", $tags="kept")
+
+Rel(anak, paperclip, "POST /api/companies/<id>/issues {url, ...}", $tags="static")
+Rel(paperclip, login_agent, "Dispatches via Bash adapter · PAPERCLIP_TASK_INPUT contains the URL", $tags="static")
+Rel(login_agent, targets, "Drives Chrome through the auth flow", $tags="static")
+Rel(login_agent, google_oauth, "OAuth click-through path", $tags="static")
+Rel(login_agent, anthropic, "claude -p per ReAct step (signup / onboarding / get-api agents)", $tags="static")
+Rel(login_agent, openrouter, "Gemini Flash Lite via OpenRouter (rung_2 + bypass_github_oauth)", $tags="static")
+Rel(login_agent, doppler, "doppler run --project scrape --config dev -- ...", $tags="static")
+Rel(login_agent, pw_profile, "pw profile (only inside onboarding_doer_agent)", $tags="static")
+
+SHOW_LEGEND()
+@enduml

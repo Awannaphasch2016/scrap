@@ -1,0 +1,107 @@
+@startuml C4_Container_LoginAgent_Plan
+!include ./lib/C4_Container.puml
+
+title L2 Container — login-agent v1 plan\nDeployable / runnable units inside the system. The bash composer dispatches to 8 sub-agent processes across 2 LLM stacks.
+
+AddElementTag("new",      $bgColor="#e8f5ee", $borderColor="#1c8a6a", $fontColor="#15181d", $legendText="🟢 NEW — created by this plan")
+AddElementTag("kept",     $bgColor="#ffffff", $borderColor="#3366AA", $fontColor="#003366", $legendText="🔵 KEPT — already in scrap/scripts/, reused unchanged")
+AddElementTag("wrapped",  $bgColor="#FFE0B3", $borderColor="#CC8800", $fontColor="#663300", $legendText="🟠 WRAPPED — existing external script, invoked as subprocess from new shim")
+AddElementTag("external", $bgColor="#F2F2F2", $borderColor="#666666", $fontColor="#333333", $legendText="External — outside the system boundary")
+AddElementTag("library",  $bgColor="#F2EAF7", $borderColor="#6a4ba9", $fontColor="#2c1a4a", $legendText="🟣 LIBRARY — shared chassis imported by Python bodies")
+
+Person(anak, "Anak", "REST API user.", $tags="kept")
+
+System_Boundary(sys, "login-agent v1 system") {
+
+  ' --- Control plane ---
+  Container(paperclip, "Paperclip server", "Express + PGlite, :3100", "Orchestrator. POST /api/issues fires the bash composer. NEW: cloned from paperclipai/paperclip to ~/dev/paperclip.", $tags="new")
+  Container(paperclip_mcp, "Paperclip MCP server", "packages/mcp-server", "Exposes Paperclip itself as MCP tools. Optional alternate driver (future v2).", $tags="new")
+
+  ' --- Browser substrate ---
+  Container(opencli_daemon, "opencli daemon", "Node :19825", "WebSocket bridge to Chrome extension. Already running on Anak's box.", $tags="kept")
+  Container(chrome, "Chrome (with opencli extension)", "Real Chrome + extension v1.0.17", "Driven by opencli over CDP. Holds the session for Anak's Google account.", $tags="kept")
+
+  ' --- Composer layer ---
+  Container(composer, "login_agent.sh", "bash", "NEW composer. Derives site key from URL hostname → dispatches login_type_detector → routes to OAuth or form-fill → routes to 2FA if detected → routes to onboarding-skipper or doer.", $tags="new")
+
+  ' --- Sub-agents: chassis-native (opencli + claude -p) ---
+  Container_Boundary(chassis_native, "Chassis-native sub-agents (opencli + claude -p ReAct loop)") {
+    Container(detector, "login_type_detector.py", "Python (no LLM)", "NEW · regex over opencli state · emits {type: oauth_google|form_fill|unknown}.", $tags="new")
+    Container(signup, "signup_agent.py", "Python · agent_core chassis", "KEPT · Google OAuth click-through (accountchooser + consent).", $tags="kept")
+    Container(skipper, "onboarding_skipper_agent.py", "Python · agent_core", "KEPT · dismiss modals (Escape, Skip, X).", $tags="kept")
+    Container(doer, "onboarding_doer_agent.py", "Python · agent_core", "KEPT · fill required fields from pw profile.", $tags="kept")
+  }
+
+  ' --- Sub-agents: subprocess shims around external scripts (browser-use) ---
+  Container_Boundary(shim_layer, "Subprocess shims (new in scrap) + wrapped externals (browser-use)") {
+    Container(form_fill_shim, "form_fill_signup_agent.py", "Python shim", "NEW · ~50 lines · --site reddit|upwork|github dispatch · invokes upstream rung script.", $tags="new")
+    Container(rung2, "rung_2_reddit_login.py", "browser-use + Gemini", "WRAPPED · ~/dev/browser-use-experiments/experiments/ · Reddit email+password.", $tags="wrapped")
+    Container(rung4, "rung_4_upwork_login.py", "browser-use + Gemini", "WRAPPED · ~/dev/browser-use-experiments/experiments/ · Upwork two-step.", $tags="wrapped")
+    Container(twofa_shim, "two_fa_bypass_agent.py", "Python shim", "NEW · ~30 lines · --provider github only · invokes bypass_github_oauth.", $tags="new")
+    Container(github_bypass, "bypass_github_oauth.py", "browser-use + pyotp + Gemini", "WRAPPED · ~/dev/pullfrog-cli/scripts/ · GitHub login + TOTP + OAuth consent.", $tags="wrapped")
+  }
+
+  ' --- Shared chassis library ---
+  Container(agent_core, "agent_core.py", "Python module · ~253 lines", "LIBRARY · ReAct loop + opencli helpers + LLM picker + executor + AgentConfig. Imported by every chassis-native agent.", $tags="library")
+}
+
+System_Ext(anthropic, "Anthropic API", "HTTPS · claude -p", $tags="external")
+System_Ext(openrouter, "OpenRouter API", "HTTPS · Gemini Flash Lite", $tags="external")
+System_Ext(doppler, "Doppler", "scrape/dev + pullfrog/dev", $tags="external")
+System_Ext(targets, "Target websites", "Reddit / GitHub / Hyperbrowser / Upwork", $tags="external")
+System_Ext(pw_profile, "pw profile CLI", "Identity digest source", $tags="external")
+
+' --- Anak → Paperclip ---
+Rel(anak, paperclip, "POST /api/companies/<id>/issues {url}", $tags="static")
+
+' --- Paperclip → composer ---
+Rel(paperclip, composer, "Bash adapter spawn · PAPERCLIP_TASK_INPUT=<url>", $tags="static")
+
+' --- Composer → sub-agents (conditional dispatch) ---
+Rel(composer, detector, "Step 1: classify login type", $tags="static")
+Rel(composer, signup, "If type=oauth_google", $tags="static")
+Rel(composer, form_fill_shim, "If type=form_fill · pass --site <key>", $tags="static")
+Rel(composer, twofa_shim, "If 2FA detected post-auth", $tags="static")
+Rel(composer, skipper, "Try first: dismissible onboarding", $tags="static")
+Rel(composer, doer, "If skipper aborts on forced fields", $tags="static")
+
+' --- Shims → wrapped externals (subprocess) ---
+Rel(form_fill_shim, rung2, "subprocess: --site reddit", $tags="static")
+Rel(form_fill_shim, rung4, "subprocess: --site upwork", $tags="static")
+Rel(twofa_shim, github_bypass, "subprocess: --provider github", $tags="static")
+
+' --- Chassis-native agents → opencli → Chrome ---
+Rel(detector, opencli_daemon, "opencli state (one-shot)", $tags="static")
+Rel(signup, opencli_daemon, "opencli state/click/fill (ReAct loop)", $tags="static")
+Rel(skipper, opencli_daemon, "opencli state/keys (Escape)", $tags="static")
+Rel(doer, opencli_daemon, "opencli state/fill/select (ReAct loop)", $tags="static")
+Rel(opencli_daemon, chrome, "WebSocket → CDP", $tags="static")
+
+' --- Wrapped externals → Chrome (their own browser session via browser-use) ---
+Rel(rung2, chrome, "browser-use Agent drives Chrome", $tags="static")
+Rel(rung4, chrome, "browser-use Agent drives Chrome", $tags="static")
+Rel(github_bypass, chrome, "browser-use + pyotp drives Chrome", $tags="static")
+
+' --- Chassis-native agents share agent_core ---
+Rel(signup, agent_core, "from agent_core import run_agent", $tags="static")
+Rel(skipper, agent_core, "from agent_core import run_agent", $tags="static")
+Rel(doer, agent_core, "from agent_core import run_agent + get_profile_text", $tags="static")
+Rel(detector, agent_core, "from agent_core import get_state", $tags="static")
+
+' --- agent_core → Anthropic ---
+Rel(agent_core, anthropic, "subprocess: claude -p <prompt>", $tags="static")
+
+' --- Wrapped → OpenRouter ---
+Rel(rung2, openrouter, "browser-use LLM call", $tags="static")
+Rel(rung4, openrouter, "browser-use LLM call", $tags="static")
+Rel(github_bypass, openrouter, "browser-use LLM call", $tags="static")
+
+' --- Sub-agents → Doppler (per-site creds) ---
+Rel(composer, doppler, "doppler run --project scrape --config dev -- bash login_agent.sh ...", $tags="static")
+Rel(doer, pw_profile, "subprocess: pw profile", $tags="static")
+
+' --- Chrome → targets ---
+Rel(chrome, targets, "HTTPS · drives the auth flow", $tags="static")
+
+SHOW_LEGEND()
+@enduml

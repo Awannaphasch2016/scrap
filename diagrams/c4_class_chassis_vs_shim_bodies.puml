@@ -1,0 +1,165 @@
+@startuml C4_Class_ChassisVsShimBodies
+title L4 Class — chassis-native bodies vs subprocess-shim bodies\nFractal substitution made tangible: two completely different internal implementations of the same external CLI contract.
+
+skinparam classFontSize 11
+skinparam classAttributeIconSize 0
+skinparam packageStyle frame
+skinparam dpi 100
+
+skinparam class {
+    BackgroundColor<<chassis>>  #e8f5ee
+    BorderColor<<chassis>>      #1c8a6a
+    BackgroundColor<<body>>     #ffffff
+    BorderColor<<body>>         #3366AA
+    BackgroundColor<<shim>>     #e8f5ee
+    BorderColor<<shim>>         #1c8a6a
+    BackgroundColor<<wrapped>>  #FFE0B3
+    BorderColor<<wrapped>>      #CC8800
+    BackgroundColor<<composer>> #F2EAF7
+    BorderColor<<composer>>     #6a4ba9
+}
+
+legend top right
+  |Color|Meaning|
+  |<#e8f5ee>| 🟢 NEW or chassis (created/lives in scrap, by this plan or earlier)|
+  |<#ffffff>| 🔵 KEPT body — chassis-native, existed before this plan|
+  |<#FFE0B3>| 🟠 WRAPPED — external script invoked by a shim|
+  |<#F2EAF7>| 🟣 COMPOSER — bash orchestrator at the top|
+endlegend
+
+' --- Chassis (shared library) ---
+package "agent_core.py (chassis)" {
+  class AgentConfig <<chassis>> {
+    + name : str
+    + goal : str
+    + extra_rules : str
+    + session : str
+    + max_steps : int
+    + post_click_sleep_s : float
+    + output_dir : Path
+  }
+
+  class "run_agent()" as RunAgent <<chassis>> {
+    + run_agent(url, config, no_nav) : dict
+  }
+  AgentConfig <.. RunAgent : consumes
+}
+
+' --- Chassis-native bodies (Python files that USE agent_core) ---
+package "Chassis-native bodies (Python · import agent_core)" {
+  class "signup_agent.py" as Signup <<body>> {
+    + GOAL : str
+    + EXTRA_RULES : str
+    + main() : None
+  }
+  class "onboarding_skipper_agent.py" as Skipper <<body>> {
+    + GOAL : str
+    + EXTRA_RULES : str
+    + main() : None
+  }
+  class "onboarding_doer_agent.py" as Doer <<body>> {
+    + GOAL : str
+    + EXTRA_RULES : str
+    + get_profile_text() : str
+    + main() : None
+  }
+  class "get_api_agent.py" as GetApi <<body>> {
+    + GOAL : str
+    + EXTRA_RULES : str
+    + main() : None
+  }
+  class "login_type_detector.py" as Detector <<shim>> {
+    + main() : None
+    .. uses agent_core.get_state ..
+    .. NO LLM, pure regex ..
+  }
+}
+
+' Chassis-native bodies instantiate AgentConfig + call run_agent
+Signup ..> AgentConfig : instantiates
+Signup ..> RunAgent : calls
+Skipper ..> AgentConfig : instantiates
+Skipper ..> RunAgent : calls
+Doer ..> AgentConfig : instantiates
+Doer ..> RunAgent : calls
+GetApi ..> AgentConfig : instantiates
+GetApi ..> RunAgent : calls
+
+' --- Subprocess-shim bodies (Python files that DO NOT use agent_core's loop) ---
+package "Subprocess-shim bodies (Python · NO agent_core loop)" {
+  class "form_fill_signup_agent.py" as FormFillShim <<shim>> {
+    + main() : None
+    .. site dispatch: reddit | upwork | github ..
+    .. subprocess.run(rung script) ..
+    .. emit final-line JSON ..
+  }
+  class "two_fa_bypass_agent.py" as TwoFaShim <<shim>> {
+    + main() : None
+    .. --provider github (v1 only) ..
+    .. subprocess.run(bypass_github_oauth) ..
+    .. emit final-line JSON ..
+  }
+}
+
+' --- Wrapped externals (browser-use scripts, lived outside scrap) ---
+package "Wrapped externals (browser-use + Gemini · separate stack)" {
+  class "rung_2_reddit_login.py" as Rung2 <<wrapped>> {
+    + main() : None
+    .. browser-use Agent ..
+    .. REDDIT_GMAIL + REDDIT_PASSWORD ..
+    .. ~/dev/browser-use-experiments/experiments/ ..
+  }
+  class "rung_4_upwork_login.py" as Rung4 <<wrapped>> {
+    + main() : None
+    .. browser-use Agent ..
+    .. UPWORK_EMAIL + UPWORK_PASSWORD ..
+  }
+  class "bypass_github_oauth.py" as GhBypass <<wrapped>> {
+    + main() : None
+    .. browser-use Agent + pyotp ..
+    .. GITHUB_* + GITHUB_TOTP_SECRET ..
+    .. ~/dev/pullfrog-cli/scripts/ ..
+  }
+}
+
+' Shims invoke wrapped externals via subprocess
+FormFillShim ..> Rung2 : subprocess.run
+FormFillShim ..> Rung4 : subprocess.run
+TwoFaShim ..> GhBypass : subprocess.run
+
+' --- Composer (bash, top-level) ---
+package "Composer (bash · the role)" {
+  class "login_agent.sh" as Composer <<composer>> {
+    + URL → SITE (hostname switch)
+    + opencli tab new
+    + detector → JSON parse → switch
+    + signup OR form_fill_shim
+    + (post-auth) twofa_shim if 2FA
+    + skipper → doer if forced-fields
+    + final-line JSON {status, session}
+  }
+}
+
+' Composer dispatches to every sub-agent
+Composer ..> Detector : python ... --session login
+Composer ..> Signup : python ... --no-nav
+Composer ..> FormFillShim : python ... --site $SITE
+Composer ..> TwoFaShim : python ... --provider github
+Composer ..> Skipper : python ... --no-nav
+Composer ..> Doer : python ... --no-nav
+
+note bottom of Composer
+  **The fractal-substitution payoff:**
+  The composer doesn't care which internal shape each
+  sub-agent uses. It calls them all the same way:
+  subprocess → check exit code → read last-line JSON →
+  branch. Chassis-native (Signup, Skipper, Doer, Detector)
+  and shim-wrapped (FormFillShim, TwoFaShim) are
+  indistinguishable from outside.
+
+  v2 fan-out: each subprocess call becomes a sibling
+  Paperclip role with its own parent/sub-issue. No
+  sub-agent code changes.
+end note
+
+@enduml
