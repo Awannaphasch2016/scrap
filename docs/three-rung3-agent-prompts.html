@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Three rung-3 agent prompts · full text for comparison</title>
+<style>
+  :root {
+    --surface: #14171c;
+    --surface-2: #1c2026;
+    --surface-3: #232830;
+    --text: #e8eaed;
+    --muted: #9aa3ad;
+    --border: #2a2f37;
+    --accent: #5eead4;
+    --accent-warm: #fbbf24;
+    --accent-cool: #8fd0ff;
+    --accent-cat: #c8a6ff;
+    --good: #2ecc71;
+    --bad: #ef4444;
+    --code-bg: #0e1116;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 24px 64px; font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--text); background: var(--surface); max-width: 1180px; margin-inline: auto; }
+  h1 { font-size: 1.7rem; margin: 1.4rem 0 0.5rem; }
+  h2 { font-size: 1.25rem; margin-top: 2.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h2 .lvl { color: var(--muted); font-size: 0.85rem; font-weight: normal; margin-left: 0.6rem; }
+  h3 { font-size: 1.05rem; margin-top: 1.6rem; color: var(--accent); }
+  .section-blurb { color: var(--muted); margin: 0.4rem 0 1rem; }
+  code.inline { background: var(--surface-2); padding: 2px 6px; border-radius: 3px; color: var(--accent); font-size: 0.92em; }
+  a { color: var(--accent); }
+  pre.prompt {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent-cool);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin: 14px 0 24px;
+    font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow-x: auto;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  pre.python {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent-warm);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 14px 0 24px;
+    font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow-x: auto;
+    color: var(--text);
+  }
+  /* Highlight the f-string substitution slots */
+  pre .slot { color: var(--accent-warm); font-weight: 600; }
+  pre .section-header { color: var(--accent); font-weight: 600; }
+  pre .universal-marker { color: var(--good); }
+  pre .toolspec-marker { color: var(--bad); }
+
+  .toc { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 18px; margin: 14px 0 22px; }
+  .toc h3 { margin-top: 0; }
+  .toc ul { margin: 0; padding-left: 24px; }
+  .toc li { margin-bottom: 4px; }
+  .callout { background: var(--surface-2); border: 1px solid var(--border); border-left: 4px solid var(--accent-warm); border-radius: 4px; padding: 12px 18px; margin: 14px 0 22px; font-size: 0.95rem; }
+  .callout strong { color: var(--accent-warm); }
+  .callout.cool { border-left-color: var(--accent-cool); }
+  .callout.cool strong { color: var(--accent-cool); }
+  .callout.good { border-left-color: var(--good); }
+  .callout.good strong { color: var(--good); }
+  table.kv { width: 100%; border-collapse: collapse; margin: 14px 0 24px; font-size: 0.9rem; }
+  table.kv th, table.kv td { text-align: left; padding: 8px 12px; border: 1px solid var(--border); vertical-align: top; }
+  table.kv th { background: var(--surface-2); color: var(--text); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  ul.tight li { margin-bottom: 4px; }
+  .tool-header {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 20px;
+    margin: 24px 0 14px;
+  }
+  .tool-header h2 { margin: 0 0 8px 0; border: none; padding-bottom: 0; }
+  .tool-meta { display: flex; gap: 20px; flex-wrap: wrap; font-size: 0.88rem; color: var(--muted); }
+  .tool-meta strong { color: var(--text); }
+</style>
+</head>
+<body>
+
+  <h1>Three rung-3 agent prompts <span class="lvl">full prompt text for hyperbrowser / vercel / cursor</span></h1>
+
+  <p class="section-blurb">After step 1 of the vertical-compression ladder (multi-agent → single <code class="inline">claude -p</code> per tool), each tool's "agent" is a small Python wrapper around one big prompt. This page shows the COMPLETE prompt for each — the f-string template as it appears in the source file, with substitution slots marked in <span style="color: var(--accent-warm); font-weight: 600;">yellow</span>. Read these to see the actual instructions Claude received that drove the successful end-to-end runs (Hyperbrowser, Vercel, Cursor — all first-try).</p>
+
+  <div class="callout cool">
+    <strong>How to read this page.</strong> Each tool has three blocks: (1) tool metadata, (2) the Python wrapper showing where the prompt is constructed and how <code class="inline">claude -p</code> is invoked, (3) the full prompt text as an f-string template. The <span class="slot" style="color: var(--accent-warm);">{slots in yellow}</span> are runtime substitutions (URL, OAuth email, token name, session name). Everything else is literal text Claude received.
+  </div>
+
+  <div class="toc">
+    <h3>Contents</h3>
+    <ul>
+      <li><a href="#hyperbrowser">1. Hyperbrowser rung-3 agent</a> · <code class="inline">scripts/hyperbrowser_rung3.py</code> · Google OAuth · dashboard-visible <code class="inline">hb_*</code></li>
+      <li><a href="#vercel">2. Vercel rung-3 agent</a> · <code class="inline">scripts/vercel_rung3.py</code> · GitHub OAuth · create-with-modal <code class="inline">vcp_*</code></li>
+      <li><a href="#cursor">3. Cursor rung-3 agent</a> · <code class="inline">scripts/cursor_rung3.py</code> · Google OAuth · create-with-modal <code class="inline">crsr_*</code></li>
+      <li><a href="#summary">4. Quick comparison summary</a></li>
+    </ul>
+  </div>
+
+  <!-- ============================================ HYPERBROWSER ============================================ -->
+
+  <div class="tool-header" id="hyperbrowser">
+    <h2>1 · Hyperbrowser rung-3 agent</h2>
+    <div class="tool-meta">
+      <span><strong>File:</strong> <code class="inline">scripts/hyperbrowser_rung3.py</code></span>
+      <span><strong>Lines:</strong> 137 total</span>
+      <span><strong>Prompt:</strong> ~4797 chars</span>
+      <span><strong>OAuth:</strong> Google as <code class="inline">anakwannaphaschaiyong@gmail.com</code></span>
+      <span><strong>Token:</strong> <code class="inline">hb_*</code> (dashboard-visible)</span>
+      <span><strong>Run result:</strong> ✅ first try, returned <code class="inline">hb_022d548b1ba2dde9d36022896c28</code></span>
+    </div>
+  </div>
+
+  <h3>Python wrapper</h3>
+
+<pre class="python">#!/usr/bin/env python3
+"""Rung-3 Hyperbrowser agent — single `claude -p`, no chassis, no sub-agents."""
+
+import os, subprocess, sys
+
+OAUTH_EMAIL = os.environ.get("GOOGLE_OAUTH_EMAIL", "&lt;unset&gt;")
+SESSION = os.environ.get("HYPERBROWSER_SESSION", "hyperbrowser")
+URL = os.environ.get("HYPERBROWSER_URL", "https://app.hyperbrowser.ai/signup")
+
+PROMPT = f"""\
+[full prompt text below — see next section]
+"""
+
+def main():
+    if OAUTH_EMAIL == "&lt;unset&gt;":
+        sys.stderr.write("[rung3] GOOGLE_OAUTH_EMAIL not set\n")
+        sys.exit(2)
+    sys.stderr.write(f"[rung3] starting · session={SESSION} url={URL} oauth_email={OAUTH_EMAIL}\n")
+    cmd = ["claude", "-p", "--allowedTools", "Bash,Read"]
+    proc = subprocess.run(cmd, input=PROMPT, text=True)
+    sys.exit(proc.returncode)
+
+if __name__ == "__main__":
+    main()
+</pre>
+
+  <h3>Full prompt text</h3>
+
+<pre class="prompt">You are a browser agent operating Chrome via the `opencli` CLI tool.
+Your job: extract a Hyperbrowser API key end-to-end. No human in the loop.
+
+# Goal
+Reach the Hyperbrowser dashboard, find the API Key section, reveal the
+masked key if needed, and extract the literal `hb_*` token value.
+
+# Final output (emit to stdout when done, then stop)
+A single line of JSON:
+  {"status": "done|blocked|failed", "tool": "hyperbrowser", "api_key": "hb_...", "summary": "&lt;one short sentence&gt;"}
+
+# Identity
+You log in via Google OAuth as `<span class="slot">{OAUTH_EMAIL}</span>`. The Google account is
+already signed in to Chrome — OAuth consent screens just need a click-through.
+
+# Substrate · opencli session `<span class="slot">{SESSION}</span>`
+All browser actions are shell commands you execute via Bash:
+
+  opencli browser <span class="slot">{SESSION}</span> --window background &lt;subcommand&gt; [args]
+
+ALWAYS pass `--window background` to avoid stealing focus from the human user.
+
+Key subcommands:
+  tab new &lt;url&gt;             open URL in a new tab (and bind <span class="slot">{SESSION}</span> to it)
+  tab list                  see bound tab(s) — empty list means session owns nothing
+  open &lt;url&gt;                navigate the bound tab to URL
+  state                     get DOM snapshot — URL, title, indexed interactives [0] [1] ...
+  screenshot &lt;path&gt;         save PNG (use Read tool with @&lt;path&gt; to view)
+  click &lt;index&gt;             click element by [N] index from state (path 1, AX-tree)
+  click --text "&lt;text&gt;"     click element by visible text (path 2, no [N] needed)
+  click --testid "&lt;id&gt;"     click element by data-testid attribute (path 2)
+  fill &lt;index&gt; "&lt;text&gt;"     fill input by index with text
+  fill --text "&lt;label&gt;" "&lt;text&gt;"   fill input identified by associated label text
+  keys "&lt;key&gt;"              press keyboard key (Enter, Escape, Tab, ArrowDown, etc.)
+  wait time &lt;seconds&gt;       wait
+
+Use Path 1 (`click &lt;index&gt;`) by default — cheapest and most reliable when
+elements appear in the state's [N] list. Use Path 2 (`--text` / `--testid`)
+when the element is visible but missing from the [N] list (common on
+React-heavy SPAs with poor accessibility tree).
+
+# Boot sequence
+1. Run: `opencli browser <span class="slot">{SESSION}</span> --window background tab new <span class="slot">{URL}</span>`
+2. Wait 5 seconds (page loads in two phases — skeleton then interactive)
+3. Run: `opencli browser <span class="slot">{SESSION}</span> --window background state`
+4. Begin the observe→act loop from there.
+
+# Iteration loop
+- Run `state` to observe current page
+- Reason about what you see
+- Pick ONE action (one shell command)
+- Execute it
+- Wait briefly (1-3 seconds for clicks that navigate)
+- Repeat
+
+# Per-state guidance (compressed from prior empirical knowledge)
+
+[at_signup_or_login] App URL with "Continue with Google" button visible
+  → Click `Continue with Google` (use [N] click or --text fallback)
+
+[in_google_oauth] URL contains accounts.google.com
+  → If accountchooser shows: click the row for `<span class="slot">{OAUTH_EMAIL}</span>`
+  → If consent screen: click Continue / Allow (usually last visible button)
+  → If password prompt and no password configured: emit status=blocked, stop
+
+[in_onboarding] Hyperbrowser onboarding modal (Welcome / personalize / Step N of M)
+  → Read pw profile if available; pick role/use-case answers from common defaults:
+    Role=Developer, Use Case=Building AI agents, URL=anak's personal site
+  → Click Next / Get Started / Finish to advance through steps
+  → On final "You're all set" modal, click Close to reveal dashboard
+
+[at_dashboard_masked_key] Dashboard with API Key section showing masked value (***)
+  → Click the masked code block, OR click the eye/Show icon next to it
+  → If a modal appears with "Copy Key" but no visible literal, take a screenshot
+    and use Read with @&lt;path&gt; to inspect what's actually visible
+
+[at_dashboard_with_visible_key] Dashboard with hb_* visible as plain text
+  → Extract the literal hb_* value from state output
+  → Emit final JSON status=done with api_key set
+
+# Caps & exit gates
+- HARD CAP: 30 shell actions max. If you exceed, emit failed and stop.
+- BLOCKED: captcha, paywall, account-locked, email-verification, 2FA,
+  payment form → emit status=blocked with one-line summary and stop
+- STUCK: same `state` URL + same interactive count for 3 consecutive
+  turns without progress → emit status=failed and stop
+
+# Notes
+- The chassis is GONE. There is no Python classifier, no sub-agent dispatch,
+  no STATE_DISPATCH table. YOU are the orchestrator. Use your own judgment
+  to interpret state strings and pick actions.
+- Run `pwd` first to confirm you're at /home/anak/dev/scrap (the working dir).
+  You should be — the wrapper invoked you from there.
+- You have Read available — use it with @&lt;path&gt; to read screenshots when
+  state's text dump doesn't give you enough to act on.
+
+Start now. Take your first action.</pre>
+
+  <!-- ============================================ VERCEL ============================================ -->
+
+  <div class="tool-header" id="vercel">
+    <h2>2 · Vercel rung-3 agent</h2>
+    <div class="tool-meta">
+      <span><strong>File:</strong> <code class="inline">scripts/vercel_rung3.py</code></span>
+      <span><strong>Lines:</strong> 138 total</span>
+      <span><strong>Prompt:</strong> ~4316 chars</span>
+      <span><strong>OAuth:</strong> GitHub as <code class="inline">awannaphasch2016@fau.edu</code></span>
+      <span><strong>Token:</strong> <code class="inline">vcp_*</code> (create-with-modal, ~60s window)</span>
+      <span><strong>Run result:</strong> ✅ first try, created token, extracted via DOM eval</span>
+    </div>
+  </div>
+
+  <h3>Python wrapper differences from Hyperbrowser</h3>
+
+<pre class="python"># Imports add `time` for token name timestamps
+import os, subprocess, sys, time
+
+# OAuth source env var changes
+OAUTH_EMAIL = os.environ.get("GITHUB_OAUTH_EMAIL", "&lt;unset&gt;")  # was GOOGLE_OAUTH_EMAIL
+SESSION = os.environ.get("VERCEL_SESSION", "vercel")          # was "hyperbrowser"
+URL = os.environ.get("VERCEL_URL", "https://vercel.com/account/settings/tokens")
+
+# NEW for create-with-modal tools: a unique token name per run
+TOKEN_NAME = f"paperclip-rung3-{int(time.time())}"
+
+# Everything else in the wrapper is identical
+</pre>
+
+  <h3>Full prompt text</h3>
+
+<pre class="prompt">You are a browser agent operating Chrome via the `opencli` CLI tool.
+Your job: create a Vercel API token and extract its literal value.
+
+# Goal
+Reach the Vercel tokens page, fill the Create-Token form, click Create,
+and EXTRACT the literal `vcp_*` token from the post-create reveal modal
+WITHIN A NARROW WINDOW (~60s — see "timing-critical" below).
+
+# Final output (emit to stdout when done, then stop)
+A single line of JSON:
+  {"status": "done|blocked|failed", "tool": "vercel", "api_key": "vcp_...", "summary": "&lt;one short sentence&gt;"}
+
+# Identity
+You log in via GitHub OAuth as `<span class="slot">{OAUTH_EMAIL}</span>`. You may already be signed
+into Vercel via GitHub — if you land at the tokens page directly, skip auth.
+
+# Substrate · opencli session `<span class="slot">{SESSION}</span>`
+All browser actions are shell commands you execute via Bash:
+
+  opencli browser <span class="slot">{SESSION}</span> --window background &lt;subcommand&gt; [args]
+
+ALWAYS pass `--window background` to avoid stealing focus from the human user.
+
+Key subcommands:
+  tab new &lt;url&gt;                      open URL in new tab (and bind session)
+  tab list                           see bound tab(s)
+  open &lt;url&gt;                         navigate bound tab to URL
+  state                              get DOM snapshot — URL, title, [N] interactives
+  screenshot &lt;path&gt;                  save PNG (use Read with @&lt;path&gt; to view)
+  click &lt;index&gt;                      click by [N] index (path 1)
+  click --text "&lt;text&gt;"              click by visible text (path 2)
+  click --testid "&lt;id&gt;"              click by data-testid (path 2)
+  fill &lt;index&gt; "&lt;text&gt;"              fill input by [N] with text
+  fill --text "&lt;label&gt;" "&lt;text&gt;"     fill by associated label
+  select &lt;index&gt; "&lt;option&gt;"          pick native &lt;select&gt; option by visible text
+  keys "&lt;key&gt;"                       press Enter/Escape/Tab/etc.
+  wait time &lt;seconds&gt;                wait
+
+# Boot sequence
+1. `opencli browser <span class="slot">{SESSION}</span> --window background tab new <span class="slot">{URL}</span>`
+2. Wait 5s
+3. `opencli browser <span class="slot">{SESSION}</span> --window background state`
+4. Begin observe→act loop.
+
+# Per-state guidance
+
+[at_signup_or_login] On vercel.com/login OR vercel.com/signup
+  → Click `Continue with GitHub` (data-testid=login/github-button or by text)
+  → After OAuth, you should return to the tokens page
+
+[in_github_oauth] URL contains github.com
+  → If credentials prompt: enter `<span class="slot">{OAUTH_EMAIL}</span>` in the username/email field;
+    if password prompt and no password set → emit status=blocked, stop
+  → If "Authorize Vercel" consent screen: click the green Authorize button
+    (usually the last full-width button)
+
+[at_token_list_page] URL contains /account/settings/tokens with a Create form
+  → The page has a form: Token Name (text input), Scope (dropdown),
+    Expiration (dropdown). Plus a Create button.
+  → Fill Token Name with EXACTLY: `<span class="slot">{TOKEN_NAME}</span>`
+  → Open Scope dropdown, pick "Full Account" (the broadest option)
+  → For Expiration, pick "No Expiration" (longest option)
+  → Click Create button
+  → IMMEDIATELY proceed to the token-revealed step — do NOT delay
+
+[at_token_revealed] "Token Created" modal appears with the literal vcp_*
+  TIMING-CRITICAL: Vercel hides the token after ~60 seconds. ACT FAST:
+  → Take a screenshot RIGHT AWAY: `screenshot /tmp/vercel_rung3_&lt;ts&gt;.png`
+  → Use Read with @&lt;path&gt; to read the literal vcp_* value from the image
+  → The token is in a code block / &lt;pre&gt; element near a Copy button
+  → opencli `state` may NOT expose the token (Vercel renders inside opaque
+    &lt;pre&gt;) — vision via Read is the reliable extraction
+  → Emit final JSON status=done with the extracted vcp_* literal
+
+# Caps & exit gates
+- HARD CAP: 30 shell actions max
+- BLOCKED: captcha, paywall, 2FA, payment form, WAF challenge
+  (e.g., "Verifying your browser") → emit status=blocked and stop
+- STUCK: same URL + same interactive count 3 turns in a row → status=failed
+
+# Notes
+- The chassis is GONE. You orchestrate end-to-end.
+- For the create-token form: Vercel sometimes shows a "Select a valid scope"
+  error if you submit without scope. Pick scope FIRST, then expiration,
+  then submit.
+- After clicking Create, the next state will be the "Token Created" modal —
+  go to vision extraction immediately. Do NOT do additional state reads
+  that waste the 60s window.
+
+Start now. Take your first action.</pre>
+
+  <!-- ============================================ CURSOR ============================================ -->
+
+  <div class="tool-header" id="cursor">
+    <h2>3 · Cursor rung-3 agent</h2>
+    <div class="tool-meta">
+      <span><strong>File:</strong> <code class="inline">scripts/cursor_rung3.py</code></span>
+      <span><strong>Lines:</strong> 141 total</span>
+      <span><strong>Prompt:</strong> ~3965 chars</span>
+      <span><strong>OAuth:</strong> Google as <code class="inline">anakwannaphaschaiyong@gmail.com</code></span>
+      <span><strong>Token:</strong> <code class="inline">crsr_*</code> / <code class="inline">cursor_sk_*</code> / <code class="inline">key_*</code> (create-with-modal)</span>
+      <span><strong>Run result:</strong> ✅ first try, used path-2 sidebar nav + JS eval extraction</span>
+    </div>
+  </div>
+
+  <h3>Python wrapper differences from Vercel</h3>
+
+<pre class="python"># OAuth source env var changes back to GOOGLE
+OAUTH_EMAIL = os.environ.get("GOOGLE_OAUTH_EMAIL", "&lt;unset&gt;")
+SESSION = os.environ.get("CURSOR_SESSION", "cursor")
+URL = os.environ.get("CURSOR_URL", "https://cursor.com/dashboard")
+TOKEN_NAME = f"paperclip-rung3-{int(time.time())}"
+
+# Everything else (main, claude -p invocation) is identical to Vercel
+</pre>
+
+  <h3>Full prompt text</h3>
+
+<pre class="prompt">You are a browser agent operating Chrome via the `opencli` CLI tool.
+Your job: create a Cursor API key and extract its literal value.
+
+# Goal
+Reach the Cursor dashboard, navigate to the API Keys subpage via the
+SIDEBAR (URL navigation does not work — Cursor's React Router ignores
+direct `open` calls), click Create / Generate, fill the form, and EXTRACT
+the literal `crsr_*` (or `cursor_sk_*` / `key_*`) token from the reveal
+modal.
+
+# Final output (emit to stdout when done, then stop)
+A single line of JSON:
+  {"status": "done|blocked|failed", "tool": "cursor", "api_key": "crsr_...", "summary": "&lt;one short sentence&gt;"}
+
+# Identity
+You log in via Google OAuth as `<span class="slot">{OAUTH_EMAIL}</span>`. You're likely already
+signed into Cursor — if you land at the dashboard directly, skip auth.
+
+# Substrate · opencli session `<span class="slot">{SESSION}</span>`
+All browser actions are shell commands you execute via Bash:
+
+  opencli browser <span class="slot">{SESSION}</span> --window background &lt;subcommand&gt; [args]
+
+ALWAYS pass `--window background` to avoid stealing focus from the human user.
+
+Key subcommands (same as other tools):
+  tab new &lt;url&gt;, tab list, open &lt;url&gt;, state, screenshot &lt;path&gt;
+  click &lt;index&gt;, click --text "&lt;text&gt;", click --testid "&lt;id&gt;"
+  fill &lt;index&gt; "&lt;text&gt;", fill --text "&lt;label&gt;" "&lt;text&gt;"
+  keys "&lt;key&gt;", wait time &lt;seconds&gt;
+  eval "&lt;js&gt;"  — execute JS in page context (useful for reading opaque
+                 &lt;pre&gt; contents: e.g. document.querySelector('code').innerText)
+
+# Boot sequence
+1. `opencli browser <span class="slot">{SESSION}</span> --window background tab new <span class="slot">{URL}</span>`
+2. Wait 5s for page to load
+3. `opencli browser <span class="slot">{SESSION}</span> --window background state`
+4. Begin observe→act loop.
+
+# Per-state guidance
+
+[at_signup_or_login] On authenticator.cursor.sh (separate subdomain!)
+  → Page has Continue with Google / GitHub / Apple / Email + a Continue button
+  → Click `Continue with Google` link (data-testid hint: not always present;
+    use index from state — Google option is usually marked "Last used")
+  → After OAuth, you'll redirect back to cursor.com
+
+[in_google_oauth] URL contains accounts.google.com
+  → If accountchooser shows: pick the row showing `<span class="slot">{OAUTH_EMAIL}</span>`
+  → If consent screen: click Continue / Allow (last button)
+  → If password prompt and no password set → emit status=blocked, stop
+
+[at_dashboard_other] Logged in but NOT at API Keys page
+  ⚠ CRITICAL: Do NOT use `open &lt;url&gt;` to navigate to API Keys.
+  Cursor's React Router ignores it — you'll stay on /dashboard root.
+  → Use path-2: `click --text "API Keys"` to click the sidebar link
+  → Then wait 3s and run state again
+
+[at_api_keys_page] URL has section=user-keys or shows "API Keys" heading
+  → Page shows a Create form with a Name input + Create button
+  → Fill Name with EXACTLY: `<span class="slot">{TOKEN_NAME}</span>`
+  → Click Create
+  → Modal will appear with the just-created key
+
+[at_token_revealed] "User API Key Created" modal showing the literal value
+  TIMING: Cursor's modal seems more durable than Vercel's, but extract fast.
+  → Take a screenshot: `screenshot /tmp/cursor_rung3_&lt;ts&gt;.png`
+  → Use Read with @&lt;path&gt; to read the literal token from the image
+  → OR try `opencli browser <span class="slot">{SESSION}</span> eval "document.querySelector('code, pre').innerText"`
+    to read the opaque &lt;pre&gt; contents — this often works
+  → Emit final JSON status=done with the literal value
+
+# Caps & exit gates
+- HARD CAP: 30 shell actions max
+- BLOCKED: captcha, paywall, "Pro plan required for API keys" gate,
+  2FA challenge → emit status=blocked and stop
+- STUCK: same URL + same interactive count 3 turns in a row → status=failed
+
+# Notes
+- Style #3 rendering: Cursor's main panel uses styled divs without
+  accessibility tree presence on the root /dashboard. The SIDEBAR navigation
+  IS chassis-friendly (semantic &lt;a&gt; elements) — that's why path-2
+  click --text works on the sidebar but URL nav does not on the main panel.
+- The chassis is GONE. You orchestrate end-to-end.
+
+Start now. Take your first action.</pre>
+
+  <!-- ============================================ SUMMARY ============================================ -->
+
+  <h2 id="summary">4 · Quick comparison summary <span class="lvl">substitution slots side by side</span></h2>
+
+  <p class="section-blurb">After reading all three prompts, the f-string substitution slots reduce to this table. These (plus the per-state guidance section's tool-specific recipes) are the entire parameter surface needed for step 2's unified prompt template.</p>
+
+  <table class="kv">
+    <thead>
+      <tr><th>Slot</th><th>Hyperbrowser</th><th>Vercel</th><th>Cursor</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code class="inline">{OAUTH_EMAIL}</code></td>
+        <td>anakwannaphaschaiyong@gmail.com<br/><em>(from GOOGLE_OAUTH_EMAIL)</em></td>
+        <td>awannaphasch2016@fau.edu<br/><em>(from GITHUB_OAUTH_EMAIL)</em></td>
+        <td>anakwannaphaschaiyong@gmail.com<br/><em>(from GOOGLE_OAUTH_EMAIL)</em></td>
+      </tr>
+      <tr>
+        <td><code class="inline">{SESSION}</code></td>
+        <td><code class="inline">hyperbrowser</code></td>
+        <td><code class="inline">vercel</code></td>
+        <td><code class="inline">cursor</code></td>
+      </tr>
+      <tr>
+        <td><code class="inline">{URL}</code></td>
+        <td>https://app.hyperbrowser.ai/signup</td>
+        <td>https://vercel.com/account/settings/tokens</td>
+        <td>https://cursor.com/dashboard</td>
+      </tr>
+      <tr>
+        <td><code class="inline">{TOKEN_NAME}</code> (if needed)</td>
+        <td>— (dashboard-visible, no create)</td>
+        <td><code class="inline">paperclip-rung3-&lt;ts&gt;</code></td>
+        <td><code class="inline">paperclip-rung3-&lt;ts&gt;</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Sections that vary structurally (not just text substitution)</h3>
+
+  <table class="kv">
+    <thead>
+      <tr><th>Section</th><th>Hyperbrowser variant</th><th>Vercel variant</th><th>Cursor variant</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Goal</strong> (one-liner)</td>
+        <td>"extract a Hyperbrowser API key" — find dashboard-visible key</td>
+        <td>"create a Vercel API token and extract its literal value" — create-then-extract with timing warning</td>
+        <td>"create a Cursor API key and extract its literal value" — create-then-extract + sidebar-nav warning</td>
+      </tr>
+      <tr>
+        <td><strong>Substrate command list</strong></td>
+        <td>baseline commands</td>
+        <td>+ <code class="inline">select</code> mentioned (Vercel uses native &lt;select&gt; dropdowns)</td>
+        <td>+ <code class="inline">eval</code> mentioned (for reading opaque &lt;pre&gt;)</td>
+      </tr>
+      <tr>
+        <td><strong>Per-state OAuth recipe</strong></td>
+        <td><code class="inline">in_google_oauth</code></td>
+        <td><code class="inline">in_github_oauth</code> (different flow shape)</td>
+        <td><code class="inline">in_google_oauth</code> (same as Hyperbrowser)</td>
+      </tr>
+      <tr>
+        <td><strong>Token-extraction state</strong></td>
+        <td><code class="inline">at_dashboard_masked_key</code> + <code class="inline">at_dashboard_with_visible_key</code> (dashboard-visible pattern)</td>
+        <td><code class="inline">at_token_list_page</code> + <code class="inline">at_token_revealed</code> (create-with-modal pattern)</td>
+        <td><code class="inline">at_api_keys_page</code> + <code class="inline">at_token_revealed</code> (create-with-modal pattern, semantic sibling of Vercel)</td>
+      </tr>
+      <tr>
+        <td><strong>Onboarding state</strong></td>
+        <td><code class="inline">in_onboarding</code> with pw-profile guidance</td>
+        <td>— (skip; user pre-onboarded)</td>
+        <td>— (skip; user pre-onboarded)</td>
+      </tr>
+      <tr>
+        <td><strong>Tool-unique state</strong></td>
+        <td>— (none)</td>
+        <td>— (none)</td>
+        <td><code class="inline">at_dashboard_other</code> + path-2 sidebar nav warning</td>
+      </tr>
+      <tr>
+        <td><strong>Footer notes</strong></td>
+        <td>"chassis is GONE" + workdir reminder + Read tool tip</td>
+        <td>+ Vercel form-error advice + 60s window emphasis</td>
+        <td>+ style-#3 React explanation + sidebar-vs-URL-nav warning</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Sections IDENTICAL across all 3 prompts</h3>
+
+  <ul class="tight">
+    <li>Opening line ("You are a browser agent operating Chrome via the <code class="inline">opencli</code> CLI tool")</li>
+    <li><strong># Substrate · opencli session</strong> command-reference body (~25 lines) — minor per-tool emphasis on <code class="inline">select</code> / <code class="inline">eval</code></li>
+    <li><strong># Boot sequence</strong> structure (tab new → wait 5s → state → loop)</li>
+    <li><strong># Iteration loop</strong> framing</li>
+    <li><strong># Caps & exit gates</strong> (30 actions, blocked, stuck — same rules verbatim)</li>
+    <li>Closing line ("Start now. Take your first action.")</li>
+  </ul>
+
+  <h2>Cross-references</h2>
+
+  <ul class="tight">
+    <li>Sibling page: <a href="three-tool-comparison-for-unified-agent-spec.html">three-tool-comparison-for-unified-agent-spec.html</a> — covers the multi-agent wrappers (the rung-2 layer this rung-3 step retired).</li>
+    <li>Sibling page: <a href="ui-rendering-styles-for-browser-agents.html">ui-rendering-styles-for-browser-agents.html</a> — the substrate-friendliness taxonomy that informs which path-1/2/3 each tool needs.</li>
+    <li>Code: <code class="inline">scripts/hyperbrowser_rung3.py</code> · <code class="inline">scripts/vercel_rung3.py</code> · <code class="inline">scripts/cursor_rung3.py</code> — the three agents whose prompts are above.</li>
+    <li>Journal: <code class="inline">multi-iteration-develop-then-test-cycle-for-browser-agent-wrappers-is-a-single-agent-pattern-...</code> — the meta-pattern this rung-3 work operationalizes.</li>
+  </ul>
+
+</body>
+</html>

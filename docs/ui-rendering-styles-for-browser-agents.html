@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UI rendering styles for browser agents · concept map + recognition heuristic</title>
+<link rel="stylesheet" href="../diagrams/viewer/diagram-viewer.css">
+<style>
+  :root {
+    --surface: #14171c;
+    --surface-2: #1c2026;
+    --surface-3: #232830;
+    --text: #e8eaed;
+    --muted: #9aa3ad;
+    --border: #2a2f37;
+    --accent: #5eead4;
+    --accent-warm: #fbbf24;
+    --accent-cool: #8fd0ff;
+    --accent-cat: #c8a6ff;
+    --good: #2ecc71;
+    --bad: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 24px 64px; font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--text); background: var(--surface); max-width: 1180px; margin-inline: auto; }
+  h1 { font-size: 1.7rem; margin: 1.4rem 0 0.5rem; }
+  h2 { font-size: 1.25rem; margin-top: 2.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h2 .lvl { color: var(--muted); font-size: 0.85rem; font-weight: normal; margin-left: 0.6rem; }
+  h3 { font-size: 1.05rem; margin-top: 1.6rem; color: var(--accent); }
+  .section-blurb { color: var(--muted); margin: 0.4rem 0 1rem; }
+  code { background: var(--surface-2); padding: 2px 6px; border-radius: 3px; color: var(--accent); font-size: 0.92em; }
+  a { color: var(--accent); }
+  pre.mermaid { background: #ffffff; border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin: 16px 0 24px; }
+  .callout { background: var(--surface-2); border: 1px solid var(--border); border-left: 4px solid var(--accent-warm); border-radius: 4px; padding: 12px 18px; margin: 14px 0 22px; font-size: 0.95rem; }
+  .callout strong { color: var(--accent-warm); }
+  .callout.cool { border-left-color: var(--accent-cool); }
+  .callout.cool strong { color: var(--accent-cool); }
+  .callout.good { border-left-color: var(--good); }
+  .callout.good strong { color: var(--good); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.bad strong { color: var(--bad); }
+  table.kv { width: 100%; border-collapse: collapse; margin: 14px 0 24px; font-size: 0.9rem; }
+  table.kv th, table.kv td { text-align: left; padding: 8px 12px; border: 1px solid var(--border); vertical-align: top; }
+  table.kv th { background: var(--surface-2); color: var(--text); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  table.kv td code { white-space: nowrap; }
+  table.kv tr.works td:first-child { border-left: 3px solid var(--good); }
+  table.kv tr.broken td:first-child { border-left: 3px solid var(--bad); }
+  table.kv tr.partial td:first-child { border-left: 3px solid var(--accent-warm); }
+  .palette { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0 16px; font-size: 0.85rem; }
+  .palette span { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 3px; border: 1px solid var(--border); }
+  .palette i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
+  ul.tight li { margin-bottom: 4px; }
+  .ok { color: var(--good); font-weight: 600; }
+  .no { color: var(--bad); font-weight: 600; }
+  .meh { color: var(--accent-warm); font-weight: 600; }
+</style>
+</head>
+<body>
+
+  <h1>UI rendering styles for browser agents <span class="lvl">concept map · recognition heuristic · tool portfolio</span></h1>
+
+  <p class="section-blurb">A DOM-driven browser agent (opencli + LLM action picker over indexed interactives) works on some sites and not others. The dividing line isn't "is it a webapp?" or "does it have OAuth?" — it's whether the site exposes its interactive elements to Chrome's accessibility tree in a way the indexer can pick up. This page maps the ten rendering styles we encounter in practice, shows how concepts interact to determine chassis viability, and gives a 30-second recognition heuristic to classify any new tool before committing to a wrapper. Companion to journal slug <code>ten-ui-rendering-styles-for-browser-automation-...</code>.</p>
+
+  <div class="callout bad">
+    <strong>⚠ Serve over HTTP for Mermaid.</strong> Open via <code>./scripts/serve-docs.sh</code> (or any local HTTP server). Double-clicking the file in WSL2 may work because Mermaid renders client-side, but <code>file://</code> URLs are unreliable across Chrome versions.
+  </div>
+
+  <div class="callout cool">
+    <strong>Diagram conventions used here.</strong> Conceptual DAGs follow the shared four-tier palette per the <code>diagram</code> preference. The recognition flowchart is plain Mermaid <code>flowchart</code> per the ad-hoc-decision-tree convention.
+    <div class="palette">
+      <span><i style="background:#f0f0ec;border:1px solid #7a818a"></i> ⬜ PRIMITIVES — external inputs the system doesn't define (rendering APIs, markup choices)</span>
+      <span><i style="background:#e8f1ff;border:1px solid #3366aa"></i> 🔵 MID-LAYER — composites the browser produces (DOM, accessibility tree, pixel buffer)</span>
+      <span><i style="background:#e8f5ee;border:1px solid #1c8a6a;border-width:2px"></i> 🟢 ATOMIC VERB — the agent loop (the central execution unit)</span>
+      <span><i style="background:#fff7d6;border:1px solid #cc8800"></i> 🟡 TERMINAL CLAIMS — which dispatch path the loop ends up choosing</span>
+    </div>
+  </div>
+
+  <h2>The concept map · how rendering style determines dispatch path <span class="lvl">conceptual DAG</span></h2>
+
+  <p class="section-blurb">Read top-to-bottom. Each rendering primitive (top, gray) produces some set of browser-side artifacts (middle, blue) — DOM tree, accessibility tree, indexed interactives, pixel buffer, iframe tree. The agent loop (green, center) consumes whatever artifacts are available. Which artifacts are available decides which terminal dispatch path (yellow, bottom) the loop can take. The dividing line between "chassis works" and "needs vision-coordinates" lives in whether the rendering primitive populates the accessibility tree.</p>
+
+  <pre class="mermaid">
+flowchart TB
+    %% --- Primitives (top) ---
+    SSR[/Server-rendered HTML<br/>semantic button a input/]
+    CSRG[/React + a11y library<br/>Radix · React Aria · shadcn/]
+    CSRP[/React + styled divs<br/>div onClick no role no aria/]
+    SUSP[/Hung Suspense<br/>progressbar stuck at 16%/]
+    CANV[/Canvas / WebGL<br/>Figma · Sheets · Tldraw/]
+    SHAD[/Shadow DOM<br/>closed root/]
+    IFRM[/Cross-origin iframe<br/>Stripe · reCAPTCHA/]
+    VLST[/Virtualized list<br/>react-window · virtuoso/]
+    ABOT[/Anti-bot fingerprint<br/>Cloudflare · DataDome/]
+    ELEC[/Electron webview<br/>remote-debugging-port/]
+
+    %% --- Mid-layer composites ---
+    DOM[DOM tree]
+    A11Y[Accessibility tree]
+    IDX[Indexed interactives<br/>'interactive: N']
+    PIX[Pixel buffer<br/>screenshot]
+    FRTR[Iframe tree<br/>opencli frames]
+    HID[Hidden interactives<br/>visible to eye<br/>invisible to indexer]
+    STUCK[Empty main panel<br/>fetch never resolves]
+
+    %% --- Atomic execution unit ---
+    LOOP((Browser agent loop<br/>observe → classify → dispatch))
+
+    %% --- Terminal dispatch paths ---
+    CHAS([Chassis dispatch<br/>click by INDEX<br/>cheapest · most reliable])
+    COORD([Vision-coordinate dispatch<br/>LLM screenshot → click x,y<br/>flexible · slower · more cost])
+    FREV([Per-frame eval dispatch<br/>opencli frames + per-frame click])
+    SCROLL([Scroll then chassis<br/>surface more interactives])
+    SHPC([Shadow-DOM pierce<br/>custom selector path])
+    UN([Stealth or skip<br/>fingerprint-evade or<br/>pick a different tool])
+
+    %% --- Rendering primitive → browser artifact ---
+    SSR --> DOM
+    SSR --> A11Y
+    CSRG --> DOM
+    CSRG --> A11Y
+    CSRP --> DOM
+    CSRP --> HID
+    SUSP --> STUCK
+    CANV --> PIX
+    SHAD --> DOM
+    SHAD --> HID
+    IFRM --> FRTR
+    VLST --> DOM
+    ABOT --> PIX
+    ELEC --> DOM
+    ELEC --> A11Y
+
+    %% --- Browser artifact → indexable / capturable ---
+    A11Y --> IDX
+    DOM -.->|partial| IDX
+    PIX --> LOOP
+    FRTR --> LOOP
+    STUCK -.->|nothing usable| LOOP
+
+    %% --- Indexed interactives → loop ---
+    IDX --> LOOP
+    HID -.->|invisible to chassis| LOOP
+
+    %% --- Loop → terminal dispatch path ---
+    LOOP --> CHAS
+    LOOP --> COORD
+    LOOP --> FREV
+    LOOP --> SCROLL
+    LOOP --> SHPC
+    LOOP --> UN
+
+    %% --- Style classes per diagram preference's four-tier palette ---
+    classDef prim  fill:#f0f0ec, stroke:#7a818a, color:#4a525c
+    classDef mid   fill:#e8f1ff, stroke:#3366aa, color:#1b4f72, stroke-width:1.5px
+    classDef core  fill:#e8f5ee, stroke:#1c8a6a, color:#15181d, stroke-width:2.5px
+    classDef claim fill:#fff7d6, stroke:#cc8800, color:#663300, stroke-width:1.5px
+
+    class SSR,CSRG,CSRP,SUSP,CANV,SHAD,IFRM,VLST,ABOT,ELEC prim
+    class DOM,A11Y,IDX,PIX,FRTR,HID,STUCK mid
+    class LOOP core
+    class CHAS,COORD,FREV,SCROLL,SHPC,UN claim
+  </pre>
+
+  <h3>What the edges say</h3>
+
+  <ul class="tight">
+    <li><strong>SSR HTML and React+a11y both reach the accessibility tree</strong> — they're functionally equivalent from the chassis's point of view. The accessibility tree is the substrate, not "client vs server."</li>
+    <li><strong>React+styled-divs reaches DOM but NOT accessibility tree</strong> — the elements exist as nodes; they're just not annotated as interactive. <code>HID</code> (hidden interactives) is the failure mode: visible to the user's eye, invisible to the indexer.</li>
+    <li><strong>Canvas reaches only the pixel buffer</strong> — there is no DOM hierarchy to traverse. The only path forward is vision-based.</li>
+    <li><strong>Iframes produce an iframe tree</strong> — opencli sees them but each frame is its own document. Per-frame <code>eval</code> is the workaround.</li>
+    <li><strong>Hung Suspense produces nothing usable</strong> — the loading shell renders but the content fetch never resolves. Same symptom as Canvas but a different root cause.</li>
+    <li><strong>Anti-bot produces ONLY the pixel buffer</strong> — and even the pixels typically show "verify you're human" instead of the real page. Vision-coordinate still doesn't help if the real content isn't loaded.</li>
+    <li><strong>Electron is the same DOM rules</strong> — Electron is Chromium under the hood. If the desktop app exposes a remote-debugging port, the chassis works exactly as it does on the web.</li>
+  </ul>
+
+  <h2>The ten styles side by side <span class="lvl">comparison matrix</span></h2>
+
+  <p class="section-blurb">All ten styles with their distinguishing properties laid out for visual comparison. Read left to right: name, what defines it, what the browser produces, whether the chassis can drive it, what to use if it can't. Color stripe on the left indicates chassis viability — green = chassis-friendly, yellow = partial / needs workaround, red = needs entirely different approach.</p>
+
+  <table class="kv">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Style</th>
+        <th>Defining feature</th>
+        <th>Browser-side artifact</th>
+        <th>Chassis sees?</th>
+        <th>Agent approach</th>
+        <th>Concrete examples</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="works">
+        <td><strong>1</strong></td>
+        <td>SSR-traditional</td>
+        <td>Server-rendered HTML with native semantic tags (<code>&lt;button&gt;</code>, <code>&lt;a href&gt;</code>, <code>&lt;input&gt;</code>, <code>&lt;form&gt;</code>)</td>
+        <td>Full DOM + accessibility tree, populated on first paint</td>
+        <td><span class="ok">YES</span> — interactive: N reliably > 5 within 3-5s</td>
+        <td>Default chassis loop. No special handling.</td>
+        <td>Hyperbrowser dashboard, GitHub, Vercel marketing, classic enterprise admin UIs</td>
+      </tr>
+      <tr class="works">
+        <td><strong>2</strong></td>
+        <td>React SPA + a11y libs</td>
+        <td>Client-rendered React using Radix / React Aria / Reach UI / shadcn — adds <code>role=button</code>, <code>aria-label</code>, <code>aria-expanded</code> to styled custom elements</td>
+        <td>DOM + accessibility tree after hydration</td>
+        <td><span class="ok">YES</span> — usually reliable; verify with 30s recon</td>
+        <td>Default chassis loop. Maybe slightly longer initial settle to wait for hydration.</td>
+        <td>Vercel dashboard, Anthropic Console, OpenAI Platform, Resend, Linear (mostly)</td>
+      </tr>
+      <tr class="broken">
+        <td><strong>3</strong></td>
+        <td>React SPA + styled divs</td>
+        <td>Client-rendered React with <code>&lt;div onClick=&gt;</code> as clickable surface; no <code>role=</code>, no <code>aria-label</code>; styling carries the affordance</td>
+        <td>DOM present but accessibility tree mostly empty</td>
+        <td><span class="no">NO</span> — interactive: 0 even though elements visually render</td>
+        <td>Vision + pixel-coordinate clicks. LLM reasons about screenshot, returns <code>{x, y}</code>. Not currently in the chassis — needs a <code>click_xy</code> action.</td>
+        <td>Cursor dashboard main panel, parts of Notion editor, some Figma surfaces</td>
+      </tr>
+      <tr class="broken">
+        <td><strong>4</strong></td>
+        <td>Hung Suspense / infinite loading</td>
+        <td>Page shell renders, main content blocked on a fetch that never resolves; progressbar visible</td>
+        <td>Partial DOM (shell only); accessibility tree never populated</td>
+        <td><span class="no">NO</span> — interactive: 0 with <code>role=progressbar aria-valuenow=16</code> visible</td>
+        <td>Hard refresh; longer wait; OR skip the route entirely and find a side-route. Often correlates with anti-automation defenses indirectly.</td>
+        <td>Cursor <code>/dashboard</code> (16% progressbar), Stripe Dashboard during outages</td>
+      </tr>
+      <tr class="broken">
+        <td><strong>5</strong></td>
+        <td>Canvas / WebGL</td>
+        <td>Content drawn as pixels via <code>&lt;canvas&gt;</code> + 2D / WebGL context; zero DOM hierarchy for the canvas content</td>
+        <td>Pixel buffer only; DOM has just the canvas element itself</td>
+        <td><span class="no">NO</span> — only the canvas wrapper is in DOM</td>
+        <td>Vision + pixel-coordinates. OCR for text extraction. Click by coordinates. The only path.</td>
+        <td>Figma canvas, Google Sheets grid, Tldraw, Excalidraw, Whimsical, design tools generally</td>
+      </tr>
+      <tr class="partial">
+        <td><strong>6</strong></td>
+        <td>Shadow DOM heavy</td>
+        <td>Web components with closed shadow roots — content lives inside an isolated shadow tree</td>
+        <td>Outer DOM + inaccessible shadow trees</td>
+        <td><span class="meh">PARTIAL</span> — opencli may not pierce closed shadow roots reliably</td>
+        <td>Shadow-DOM-aware selectors via <code>opencli browser eval</code>. Sometimes works, sometimes brittle.</td>
+        <td>YouTube player, some enterprise admin tools using LitElement / Stencil</td>
+      </tr>
+      <tr class="partial">
+        <td><strong>7</strong></td>
+        <td>Cross-origin iframes</td>
+        <td>Critical content embedded as third-party iframes — separate documents, separate origin policies</td>
+        <td>Iframe tree (opaque from parent); each frame has its own DOM</td>
+        <td><span class="meh">PARTIAL</span> — sees <code>&lt;iframe /&gt;</code> as opaque element</td>
+        <td><code>opencli browser frames</code> to enumerate, <code>opencli browser eval --frame N</code> to act on each. Multi-step.</td>
+        <td>Stripe checkout widget, Auth0 login widget, reCAPTCHA, hCaptcha challenges</td>
+      </tr>
+      <tr class="partial">
+        <td><strong>8</strong></td>
+        <td>Virtualized lists</td>
+        <td>Only visible rows are in DOM; off-screen rows are recycled / not rendered (react-window, react-virtuoso, tanstack-virtual)</td>
+        <td>DOM contains only visible portion + a sentinel for scroll position</td>
+        <td><span class="meh">PARTIAL</span> — N visible rows are indexed; everything else is invisible</td>
+        <td>Scroll to bring target into viewport, then chassis dispatch. Multiple passes if you don't know where the target sits.</td>
+        <td>Long admin tables, infinite-scroll feeds, Notion database views</td>
+      </tr>
+      <tr class="broken">
+        <td><strong>9</strong></td>
+        <td>Anti-bot fingerprinted</td>
+        <td>Automated browsers detected and gated by Cloudflare Turnstile / DataDome / PerimeterX / Akamai BotManager</td>
+        <td>Pixel buffer shows captcha or blank; real page never reached</td>
+        <td><span class="no">NO</span> — adversarial; chassis sees the gate, not the content</td>
+        <td>Stealth Chrome flags + residential proxies + human-in-loop, OR avoid the tool. Different problem class.</td>
+        <td>Upwork, parts of Reddit, many e-commerce sites, ticketing sites</td>
+      </tr>
+      <tr class="works">
+        <td><strong>10</strong></td>
+        <td>Electron webview</td>
+        <td>Native desktop app wrapping Chromium; reachable via remote-debugging port</td>
+        <td>Same DOM model as web — depends on the app's internal rendering choices</td>
+        <td><span class="ok">YES</span> — same chassis rules apply; just connect to the Electron CDP endpoint</td>
+        <td>Point opencli's daemon at Electron's debug port instead of the Chrome extension. Otherwise identical.</td>
+        <td>Cursor desktop, Slack desktop, Linear desktop, VS Code, most Electron apps</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Recognition heuristic · 30 seconds to classify any new tool <span class="lvl">decision flowchart</span></h2>
+
+  <p class="section-blurb">Before committing to a wrapper for a new tool, run this decision tree. It costs 30 seconds of opencli + screenshot work and saves hours of dead-end implementation. Result tells you which style category the tool's main surface lives in and which agent approach to budget for.</p>
+
+  <pre class="mermaid">
+flowchart TD
+    Start([New tool to evaluate]) --> Recon[Open target URL in opencli<br/>sleep 5s<br/>get state]
+    Recon --> Q1{interactive: N<br/>where N > 5?}
+
+    Q1 -- "Yes (chassis-friendly)" --> Q1a{Reaches same N<br/>on re-nav?}
+    Q1a -- "Yes" --> StyleA[Style 1 or 2<br/>SSR or React+a11y]
+    Q1a -- "No (drops to 0)" --> StyleB[Style 3 or 4<br/>brittle hydration<br/>or hung Suspense]
+
+    Q1 -- "No (interactive: 0)" --> Q2{Visual screenshot<br/>shows content?}
+
+    Q2 -- "Yes (pixels there)" --> Q3{progressbar role visible<br/>in state?}
+    Q3 -- "Yes" --> StyleC[Style 4<br/>Hung Suspense]
+    Q3 -- "No" --> Q4{canvas tag<br/>dominates DOM?}
+    Q4 -- "Yes" --> StyleD[Style 5<br/>Canvas / WebGL]
+    Q4 -- "No" --> StyleE[Style 3<br/>React + styled divs<br/>poor a11y]
+
+    Q2 -- "No (blank / captcha)" --> Q5{Cloudflare /<br/>captcha visible?}
+    Q5 -- "Yes" --> StyleF[Style 9<br/>Anti-bot adversarial]
+    Q5 -- "No" --> StyleG[Possibly Style 4<br/>or auth missing]
+
+    StyleA --> PathChassis[Use chassis as-is<br/>~60-90 min wrapper]
+    StyleB --> PathTryAgain[Retry with longer settle<br/>or pick stable sub-route]
+    StyleC --> PathSkipRoute[Find non-hung sub-route<br/>OR skip tool]
+    StyleD --> PathVisionCoord[Vision + pixel-coord<br/>build click_xy action]
+    StyleE --> PathVisionCoord
+    StyleF --> PathStealthOrSkip[Stealth flags + proxies<br/>OR pick different tool]
+    StyleG --> PathRefreshAuth[Check session<br/>re-auth if stale]
+
+    PathChassis --> Done([Proceed to chain design])
+    PathVisionCoord --> NewAction[Need new agent capability:<br/>extend chassis OR<br/>pick different tool]
+
+    classDef startnode fill:#e8f1ff,stroke:#3366aa,color:#0a2540
+    classDef decision fill:#fff7d6,stroke:#cc8800,color:#5a3a00
+    classDef good fill:#e8f5ee,stroke:#1c8a6a,color:#0a3326
+    classDef bad fill:#ffb3b3,stroke:#b30000,color:#400000
+    classDef partial fill:#fef0d0,stroke:#cc8800,color:#5a3a00
+
+    class Start,Done startnode
+    class Q1,Q1a,Q2,Q3,Q4,Q5 decision
+    class StyleA,PathChassis good
+    class StyleB,StyleC,PathTryAgain,PathSkipRoute,PathRefreshAuth partial
+    class StyleD,StyleE,StyleF,PathVisionCoord,PathStealthOrSkip,NewAction bad
+  </pre>
+
+  <h3>The recon command pattern</h3>
+
+  <p class="section-blurb">Wrap this as <code>scripts/chassis_recon.sh</code> when the second tool surfaces (open follow-up from the journal entry):</p>
+
+  <pre style="background:var(--surface-2); padding:14px 18px; border-radius:4px; border:1px solid var(--border); overflow-x:auto; color:var(--text); font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;">
+opencli browser recon-sess --window background tab new "$URL"
+sleep 5
+opencli browser recon-sess --window background state | head -50
+
+# Decision criteria:
+#   interactive: N > 5  → style 1/2  → chassis works → build wrapper
+#   interactive: 0      → check screenshot to disambiguate 3/4/5/9
+#   screenshot content + state empty → style 3 (poor a11y) or 4 (Suspense)
+#   screenshot blank + state empty   → style 9 (anti-bot) or auth issue</pre>
+
+  <h2>Tool portfolio · expected style per target <span class="lvl">starting reference, not ground truth</span></h2>
+
+  <p class="section-blurb">First-pass expectation for which style each likely target tool falls into. Recon should ground-truth each before committing. Marked "verified" where empirical data exists, "expected" otherwise.</p>
+
+  <table class="kv">
+    <thead>
+      <tr><th>Tool</th><th>Expected style</th><th>Chassis-viable?</th><th>Confidence</th></tr>
+    </thead>
+    <tbody>
+      <tr class="works"><td>Hyperbrowser</td><td>#1 / #2</td><td><span class="ok">YES</span></td><td>Verified (4 successful chains 2026-06-05/06)</td></tr>
+      <tr class="works"><td>Vercel</td><td>#2 (Next.js + own design system)</td><td><span class="ok">YES</span></td><td>Expected (Next.js is SSR-friendly)</td></tr>
+      <tr class="works"><td>Anthropic Console</td><td>#2</td><td><span class="ok">YES</span></td><td>Expected</td></tr>
+      <tr class="works"><td>OpenAI Platform</td><td>#2</td><td><span class="ok">YES</span></td><td>Expected</td></tr>
+      <tr class="works"><td>Linear</td><td>#2 (mostly)</td><td><span class="ok">YES</span></td><td>Expected</td></tr>
+      <tr class="partial"><td>Stripe Dashboard</td><td>#2 + #7 for checkout</td><td><span class="meh">MIXED</span></td><td>Expected — main dashboard OK, payment flows iframe-heavy</td></tr>
+      <tr class="partial"><td>Notion</td><td>#3 / #6 / #8 mixed</td><td><span class="meh">PER-SURFACE</span></td><td>Expected — editor is canvas-ish, lists are virtualized</td></tr>
+      <tr class="broken"><td>Cursor dashboard</td><td>#3 / #4</td><td><span class="no">NO</span></td><td>Verified broken (recon 2026-06-07 — interactive: 0, progressbar stuck)</td></tr>
+      <tr class="broken"><td>Figma</td><td>#5 (canvas)</td><td><span class="no">NO</span></td><td>Vision-only</td></tr>
+      <tr class="partial"><td>Google Sheets</td><td>#5 (grid) + #1 (chrome)</td><td><span class="meh">LIMITED</span></td><td>Sheet content vision-only; menus chassis-friendly</td></tr>
+      <tr class="works"><td>GitHub</td><td>#1 (mostly)</td><td><span class="ok">YES</span></td><td>Expected</td></tr>
+      <tr class="partial"><td>Reddit</td><td>#2 (new) / #1 (.old)</td><td><span class="ok">YES via .old</span></td><td>Expected — prefer <code>old.reddit.com</code> for chassis</td></tr>
+      <tr class="broken"><td>Upwork</td><td>#9 (anti-bot)</td><td><span class="no">NO</span></td><td>Verified adversarial (prior recon attempts)</td></tr>
+      <tr class="works"><td>Cursor desktop (Electron)</td><td>#10</td><td><span class="ok">YES (if debug port available)</span></td><td>Untested — possible escape valve for the Cursor case</td></tr>
+    </tbody>
+  </table>
+
+  <h2>The deeper point · architecture has structural limits, not preferences</h2>
+
+  <p class="section-blurb">Each agent architecture maps onto a subset of the ten styles. None covers all ten. Picking an architecture is picking which styles you can drive — and that should be informed by the portfolio of tools you actually want to automate, not by what's convenient for the first one.</p>
+
+  <table class="kv">
+    <thead>
+      <tr><th>Architecture</th><th>Covers styles</th><th>Cost per step</th><th>When it's the right fit</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>DOM-indexer + LLM action picker <em>(current chassis)</em></td>
+        <td>#1, #2, partly #6-#8, #10</td>
+        <td>Cheap — ~3-5s/step + LLM</td>
+        <td>Portfolio is mostly modern dev-tool SaaS with semantic markup</td>
+      </tr>
+      <tr>
+        <td>Vision + pixel-coordinate + LLM</td>
+        <td>#3, #4, #5 (text-extracted via OCR)</td>
+        <td>Medium — vision tokens per step + coord-reasoning latency</td>
+        <td>Portfolio includes design tools, canvas apps, poor-a11y dashboards</td>
+      </tr>
+      <tr>
+        <td>Vision + DOM hybrid</td>
+        <td>Everything except #9</td>
+        <td>Expensive — both substrates per step</td>
+        <td>One-off high-value targets where reliability matters more than per-step cost</td>
+      </tr>
+      <tr>
+        <td>Managed browser provider (Browserbase, Hyperbrowser sessions, Steel.dev)</td>
+        <td>#2, #3, partly #5, recording included</td>
+        <td>Per-session $ (~$0.10-0.50/run)</td>
+        <td>You want session recording + provider-side DOM extraction without building it</td>
+      </tr>
+      <tr>
+        <td>Playwright bridge</td>
+        <td>#1-#3, #6-#8 cleanly</td>
+        <td>Cheap, with trace recording</td>
+        <td>Need rich selectors (text-content, XPath, role-with-name) + the gold-standard Trace Viewer for debugging</td>
+      </tr>
+      <tr>
+        <td>Stealth-browser + residential proxy</td>
+        <td>#9</td>
+        <td>$ per proxy minute + setup complexity</td>
+        <td>You must automate an anti-bot-protected target and have authorization</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Cross-references</h2>
+
+  <ul class="tight">
+    <li>Journal entry · <code>ten-ui-rendering-styles-for-browser-automation-which-are-chassis-friendly-and-which-need-vision-coordinate-fallback-recognition-heuristic-tool-portfolio-map</code> — the prose version of this page with the same content as a searchable text entry.</li>
+    <li>Journal entry · <code>opencli-anti-patterns-catalog-nine-failure-modes-when-driving-real-chrome-agentically</code> — operational rules for using opencli once you've confirmed a tool is chassis-friendly.</li>
+    <li>Journal entry · <code>agent-wrapper-architecture-choice-hardcoded-python-pipeline-vs-llm-orchestrator-with-sub-agents-as-skills-...</code> — the rung-2 chassis whose structural limit this page maps.</li>
+    <li>Journal entry · <code>map-the-full-ui-state-graph-before-picking-the-minimal-classifier-set-for-a-state-routed-agent-...</code> — methodology that ASSUMES chassis-friendliness; this page is the precondition for that methodology.</li>
+    <li>Sibling diagram · <code>hyperbrowser-ui-state-graph.html</code> — concrete state graph for Hyperbrowser, which lives in style #1/#2.</li>
+  </ul>
+
+  <h2>Open follow-ups</h2>
+
+  <ul class="tight">
+    <li><strong>Build <code>scripts/chassis_recon.sh</code></strong> — wraps the 30s test as a CLI: <code>chassis_recon.sh &lt;url&gt;</code> → <code>{interactive_count, hangs_at_progressbar, accessibility_score, recommended_style, recommended_path}</code>.</li>
+    <li><strong>Audit the portfolio</strong> — run <code>chassis_recon.sh</code> on Vercel, OpenAI Platform, Anthropic Console, Linear, Stripe Dashboard, Notion, Reddit (.old vs new), GitHub. Replace "expected" with "verified" in the portfolio table.</li>
+    <li><strong>Build the vision-coordinate fallback path</strong> — <code>click_xy</code> action in <code>agent_core</code> + a coordinate-reasoning sub-agent that takes a screenshot + a goal and returns <code>{x, y}</code>. Unlocks styles #3, #4 (and #5 for OCR-readable text content).</li>
+    <li><strong>Test Cursor desktop (Electron, style #10)</strong> — same Cursor brand, different rendering substrate. May be chassis-viable where the web dashboard isn't.</li>
+    <li><strong>Document architecture-choice matrix</strong> as a decision aid — pick DOM-indexer / vision-coordinate / hybrid / browser-provider based on which styles dominate the target portfolio.</li>
+  </ul>
+
+<script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js"></script>
+<script src="../diagrams/viewer/diagram-viewer.js" defer></script>
+</body>
+</html>

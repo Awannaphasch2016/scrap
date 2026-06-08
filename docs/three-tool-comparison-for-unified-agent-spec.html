@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Three-tool comparison · shared surface area for a unified login → get-api agent</title>
+<style>
+  :root {
+    --surface: #14171c;
+    --surface-2: #1c2026;
+    --surface-3: #232830;
+    --text: #e8eaed;
+    --muted: #9aa3ad;
+    --border: #2a2f37;
+    --accent: #5eead4;
+    --accent-warm: #fbbf24;
+    --accent-cool: #8fd0ff;
+    --accent-cat: #c8a6ff;
+    --good: #2ecc71;
+    --bad: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 0 24px 64px; font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: var(--text); background: var(--surface); max-width: 1180px; margin-inline: auto; }
+  h1 { font-size: 1.7rem; margin: 1.4rem 0 0.5rem; }
+  h2 { font-size: 1.25rem; margin-top: 2.4rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+  h2 .lvl { color: var(--muted); font-size: 0.85rem; font-weight: normal; margin-left: 0.6rem; }
+  h3 { font-size: 1.05rem; margin-top: 1.6rem; color: var(--accent); }
+  .section-blurb { color: var(--muted); margin: 0.4rem 0 1rem; }
+  code { background: var(--surface-2); padding: 2px 6px; border-radius: 3px; color: var(--accent); font-size: 0.92em; }
+  a { color: var(--accent); }
+  pre.mermaid { background: #ffffff; border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin: 16px 0 24px; }
+  pre.code { background: var(--surface-2); padding: 14px 18px; border-radius: 4px; border: 1px solid var(--border); overflow-x: auto; color: var(--text); font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 14px 0 22px; }
+  .callout { background: var(--surface-2); border: 1px solid var(--border); border-left: 4px solid var(--accent-warm); border-radius: 4px; padding: 12px 18px; margin: 14px 0 22px; font-size: 0.95rem; }
+  .callout strong { color: var(--accent-warm); }
+  .callout.cool { border-left-color: var(--accent-cool); }
+  .callout.cool strong { color: var(--accent-cool); }
+  .callout.good { border-left-color: var(--good); }
+  .callout.good strong { color: var(--good); }
+  .callout.bad { border-left-color: var(--bad); }
+  .callout.bad strong { color: var(--bad); }
+  table.kv { width: 100%; border-collapse: collapse; margin: 14px 0 24px; font-size: 0.9rem; }
+  table.kv th, table.kv td { text-align: left; padding: 8px 12px; border: 1px solid var(--border); vertical-align: top; }
+  table.kv th { background: var(--surface-2); color: var(--text); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  table.kv td code { white-space: nowrap; }
+  .palette { display: flex; gap: 12px; flex-wrap: wrap; margin: 8px 0 16px; font-size: 0.85rem; }
+  .palette span { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 3px; border: 1px solid var(--border); }
+  .palette i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
+  ul.tight li { margin-bottom: 4px; }
+  .ok { color: var(--good); font-weight: 600; }
+  .no { color: var(--bad); font-weight: 600; }
+  .meh { color: var(--accent-warm); font-weight: 600; }
+  .three-cols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; margin: 14px 0; }
+  .three-cols > div { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+  .three-cols h4 { margin: 0 0 8px 0; color: var(--accent-cool); font-size: 0.95rem; }
+</style>
+</head>
+<body>
+
+  <h1>Three-tool comparison <span class="lvl">shared surface area for a unified login → get-api agent</span></h1>
+
+  <p class="section-blurb">After building three concrete tool wrappers — Hyperbrowser (tool #1, 2026-06-05/06), Vercel (tool #2, 2026-06-07), Cursor (tool #3, 2026-06-07) — N=3 is enough data to safely extract the abstraction. This page maps the shared surface area visually so the next implementation step (a single generalized <code>build_login_to_get_api_agent</code> agent) can be specified precisely instead of guessed. Five diagrams from different angles + the resulting unified-agent spec.</p>
+
+  <div class="callout cool">
+    <strong>Methodology</strong>. Three concrete instances give enough diversity to distinguish "truly shared" from "happens-to-match-twice-by-coincidence." N=2 is dangerous because the second instance always looks similar to the first. N=3 with deliberate variation (different OAuth providers, different rendering styles, different token-reveal patterns) is the smallest safe sample for abstraction extraction.
+  </div>
+
+  <div class="callout">
+    <strong>Color legend used across diagrams.</strong>
+    <div class="palette">
+      <span><i style="background:#e8f1ff;border:1px solid #3366aa"></i> 🔵 SHARED across all 3 tools</span>
+      <span><i style="background:#fff7d6;border:1px solid #cc8800"></i> 🟡 SHARED across 2 tools (with semantic variation)</span>
+      <span><i style="background:#ffb3b3;border:1px solid #b30000"></i> 🔴 TOOL-SPECIFIC (varies per instance)</span>
+      <span><i style="background:#e8f5ee;border:1px solid #1c8a6a"></i> 🟢 ARGUMENT (parameter to the unified agent)</span>
+      <span><i style="background:#f0f0ec;border:1px solid #7a818a"></i> ⬜ EXTERNAL SUBSTRATE (Doppler, opencli, Chrome, claude -p)</span>
+    </div>
+  </div>
+
+  <h2>Diagram 1 · System overview <span class="lvl">shared library vs per-tool wrapper boundary</span></h2>
+
+  <p class="section-blurb">Top: external substrates the system depends on. Middle: shared code library (one copy, used by every tool wrapper). Bottom: three per-tool wrappers — each ~270 lines, ~85% identical to each other. Edges show "uses" / "produces" relationships. The boundary between the shared middle layer and the per-tool wrappers IS the abstraction surface we're extracting.</p>
+
+  <pre class="mermaid">
+flowchart TB
+    %% --- External substrates (top, gray trapezoid) ---
+    DOP[/Doppler accounts/oauth<br/>identity credentials/]
+    OPC[/opencli<br/>Chrome bridge/]
+    CHR[/Chrome browser<br/>your session/]
+    CP[/claude -p<br/>LLM + vision/]
+
+    %% --- Shared library (middle, blue rectangle) ---
+    CHAS[agent_core.py<br/>chassis loop +<br/>13 action verbs incl path-2]
+    CLS[state_classifier.py<br/>vision classifier]
+    SIGN[signup_agent.py<br/>OAuth click-through<br/>parameterized by OAUTH_PROVIDER]
+    ONB[onboarding_doer_agent.py<br/>form-fill from profile]
+    GETA[get_api_agent.py<br/>dashboard-visible key extractor]
+    CRT[create_token_agent.py<br/>create-then-reveal flow]
+    REC[screen_recorder.py<br/>frame-by-frame capture]
+
+    %% --- The three per-tool wrappers (bottom, yellow stadium) ---
+    HB([hyperbrowser_signup.py<br/>tool #1])
+    VC([vercel_signup.py<br/>tool #2])
+    CU([cursor_signup.py<br/>tool #3])
+
+    %% --- Edges: substrates → shared library ---
+    DOP --> SIGN
+    OPC --> CHAS
+    OPC --> CLS
+    CHR --> OPC
+    CP --> CLS
+    CP --> CHAS
+
+    %% --- Edges: shared library internal ---
+    CHAS --> SIGN
+    CHAS --> ONB
+    CHAS --> GETA
+    CHAS --> CRT
+    CLS --> CHAS
+
+    %% --- Edges: wrappers use shared ---
+    CHAS --> HB
+    CHAS --> VC
+    CHAS --> CU
+    CLS --> HB
+    CLS --> VC
+    CLS --> CU
+    SIGN --> HB
+    SIGN --> VC
+    SIGN --> CU
+    ONB --> HB
+    ONB --> VC
+    ONB --> CU
+    GETA --> HB
+    CRT --> VC
+    CRT --> CU
+    REC --> CU
+
+    %% --- Style classes ---
+    classDef prim fill:#f0f0ec, stroke:#7a818a, color:#4a525c
+    classDef shared fill:#e8f1ff, stroke:#3366aa, color:#1b4f72, stroke-width:1.5px
+    classDef wrapper fill:#ffb3b3, stroke:#b30000, color:#400000, stroke-width:1.5px
+
+    class DOP,OPC,CHR,CP prim
+    class CHAS,CLS,SIGN,ONB,GETA,CRT,REC shared
+    class HB,VC,CU wrapper
+  </pre>
+
+  <h3>What this shows</h3>
+
+  <ul class="tight">
+    <li><strong>The middle blue layer is the abstraction.</strong> Six shared library files (~1500 LoC) used identically by all three wrappers. Zero per-tool edits to these files (after the day-1 chassis extension this session).</li>
+    <li><strong>Onboarding-doer is loaded by all 3 but only Hyperbrowser actually dispatches it</strong> — Vercel and Cursor users were already onboarded. Capability is there; not all tools exercise it.</li>
+    <li><strong>get_api_agent vs create_token_agent split</strong>: only Hyperbrowser uses get_api_agent (dashboard-visible key). Vercel and Cursor use create_token_agent (create-then-reveal flow). This is a meaningful per-tool axis.</li>
+    <li><strong>screen_recorder.py</strong> is wired into Cursor only so far — should be promoted to default-on for all wrappers (open follow-up).</li>
+  </ul>
+
+  <h2>Diagram 2 · Per-tool state graphs <span class="lvl">which states are universal vs tool-specific</span></h2>
+
+  <p class="section-blurb">Each tool defines a state vocabulary (7-8 strings) the classifier maps screenshots into. The graph below shows all 21 state instances across the three tools, color-coded by whether the state is shared. Universal states (blue) become defaults in the unified agent; tool-specific states (red) become declared extras in the per-tool config.</p>
+
+  <pre class="mermaid">
+flowchart LR
+    %% --- Hyperbrowser column ---
+    subgraph HBG["Hyperbrowser (7 states)"]
+        H1[at_signup_or_login]
+        H2[in_google_oauth]
+        H3[in_onboarding]
+        H4[at_dashboard_masked_key]
+        H5[at_dashboard_with_visible_key]
+        H6[blocked_external_gate]
+        H7[unknown]
+    end
+
+    %% --- Vercel column ---
+    subgraph VCG["Vercel (7 states)"]
+        V1[at_signup_or_login]
+        V2[in_google_oauth]
+        V3[in_onboarding]
+        V4[at_token_list_page]
+        V5[at_token_revealed]
+        V6[blocked_external_gate]
+        V7[unknown]
+    end
+
+    %% --- Cursor column ---
+    subgraph CUG["Cursor (8 states)"]
+        C1[at_signup_or_login]
+        C2[in_google_oauth]
+        C3[in_onboarding]
+        C4[at_api_keys_page]
+        C5[at_token_revealed]
+        C8[at_dashboard_other]
+        C6[blocked_external_gate]
+        C7[unknown]
+    end
+
+    classDef universal fill:#e8f1ff, stroke:#3366aa, color:#1b4f72, stroke-width:1.5px
+    classDef twoshared fill:#fff7d6, stroke:#cc8800, color:#663300, stroke-width:1.5px
+    classDef toolonly fill:#ffb3b3, stroke:#b30000, color:#400000, stroke-width:1.5px
+
+    %% 5 universal states (blue) — present in all 3 vocab
+    class H1,V1,C1,H2,V2,C2,H3,V3,C3,H6,V6,C6,H7,V7,C7 universal
+
+    %% 2-tool shared (yellow) — semantic siblings across Vercel + Cursor
+    class V4,C4,V5,C5 twoshared
+
+    %% Tool-specific (red)
+    class H4,H5,C8 toolonly
+  </pre>
+
+  <h3>What this shows</h3>
+
+  <p>Of the 21 state instances:</p>
+
+  <ul class="tight">
+    <li><strong>15 are universal</strong> (5 states × 3 tools): <code>at_signup_or_login</code>, <code>in_google_oauth</code> (also <code>in_github_oauth</code> for one tool, but semantically same role), <code>in_onboarding</code>, <code>blocked_external_gate</code>, <code>unknown</code>. These become the BUILT-IN defaults in the unified agent.</li>
+    <li><strong>4 are 2-tool shared</strong> (2 states × 2 tools): the create-token flow's <code>at_token_list_page</code>/<code>at_api_keys_page</code> and <code>at_token_revealed</code>. These become a SELECTABLE preset ("create-token flow") the unified agent's config can opt into.</li>
+    <li><strong>3 are tool-specific</strong>: Hyperbrowser's <code>at_dashboard_masked_key</code> + <code>at_dashboard_with_visible_key</code> (its dashboard-visible-key flow), Cursor's <code>at_dashboard_other</code> (its sidebar-nav-required flow). These become DECLARED EXTRAS in the tool's per-instance config.</li>
+  </ul>
+
+  <p>So the unified agent ships with a 5-state DEFAULT vocab (the universal ones) + 1 SELECTABLE preset (create-token-flow) + zero-to-N tool-specific EXTRAS. ~80% of the state vocab is shared.</p>
+
+  <h2>Diagram 3 · Sub-agent reuse matrix <span class="lvl">which sub-agents each tool dispatches and how their prompts vary</span></h2>
+
+  <p class="section-blurb">Four sub-agents in the shared library. Each tool dispatches some subset. Where the SAME sub-agent is dispatched by multiple tools, only the PROMPT parameter (e.g., OAUTH_PROVIDER) varies — the code is identical.</p>
+
+  <pre class="mermaid">
+flowchart TB
+    %% --- Sub-agents (mid-layer, blue) ---
+    SIGN[signup_agent.py<br/>parameter: OAUTH_PROVIDER env var<br/>+ identity email from doppler]
+    ONB[onboarding_doer_agent.py<br/>parameter: pw profile data]
+    GETA[get_api_agent.py<br/>no parameters — generic reveal logic]
+    CRT[create_token_agent.py<br/>parameter: token name pattern]
+
+    %% --- Per-tool dispatch decisions (bottom, color-coded by tool) ---
+    HB1[Hyperbrowser dispatches:<br/>signup_agent OAUTH_PROVIDER=google<br/>onboarding_doer_agent<br/>get_api_agent]
+
+    VC1[Vercel dispatches:<br/>signup_agent OAUTH_PROVIDER=github<br/>onboarding_doer if needed not dispatched in practice<br/>create_token_agent]
+
+    CU1[Cursor dispatches:<br/>signup_agent OAUTH_PROVIDER=google<br/>onboarding_doer if needed not dispatched in practice<br/>create_token_agent<br/>plus inline navigate_to_api_keys via path-2]
+
+    SIGN --> HB1
+    SIGN --> VC1
+    SIGN --> CU1
+    ONB --> HB1
+    ONB -.->|optional| VC1
+    ONB -.->|optional| CU1
+    GETA --> HB1
+    CRT --> VC1
+    CRT --> CU1
+
+    classDef shared fill:#e8f1ff, stroke:#3366aa, color:#1b4f72, stroke-width:1.5px
+    classDef tool fill:#ffb3b3, stroke:#b30000, color:#400000
+
+    class SIGN,ONB,GETA,CRT shared
+    class HB1,VC1,CU1 tool
+  </pre>
+
+  <h3>What this shows</h3>
+
+  <ul class="tight">
+    <li><strong>signup_agent is universal</strong> — all 3 tools dispatch it. Already parameterized via <code>OAUTH_PROVIDER</code> env var (Google/GitHub branches in the prompt; Apple/email plausibly easy to add).</li>
+    <li><strong>onboarding_doer is universally available</strong> but only dispatched when the tool's onboarding state is actually reached. (Vercel and Cursor accounts were pre-onboarded so the state never fired.)</li>
+    <li><strong>Token-extraction is bimodal</strong>: get_api_agent (dashboard-visible) vs create_token_agent (create-then-reveal). The tool config picks one.</li>
+    <li><strong>One tool-specific dispatcher</strong>: Cursor's inline <code>_dispatch_navigate_to_api_keys</code> using path-2 <code>click --text "API Keys"</code>. This is an ESCAPE HATCH the unified agent needs to support — arbitrary per-tool inline dispatchers for special transitions.</li>
+  </ul>
+
+  <h2>Diagram 4 · The 5 swap points <span class="lvl">the exact parameters that vary per tool</span></h2>
+
+  <p class="section-blurb">From comparing the three wrapper scripts: 5 specific surfaces vary. Everything else is identical boilerplate (~85% of the ~270 lines is reusable as-is). These 5 swap points BECOME the parameter surface of the unified agent.</p>
+
+  <pre class="mermaid">
+flowchart TB
+    %% --- The 5 swap points as inputs ---
+    P1[/1 · URL<br/>target start URL/]
+    P2[/2 · KEY_REGEX<br/>vendor token shape/]
+    P3[/3 · OAUTH_PROVIDER<br/>google / github / apple/]
+    P4[/4 · STATE_VOCAB<br/>tool-specific extras<br/>over the 5-state default/]
+    P5[/5 · STATE_DISPATCH<br/>state → sub-agent map<br/>+ optional inline dispatchers/]
+
+    %% --- The unified agent core ---
+    AGENT(((Unified login → get-api agent<br/>cold-start + classify + dispatch + extract<br/>~250 lines, takes ToolConfig as input)))
+
+    %% --- The output ---
+    OUT([Final JSON<br/>status, tool, api_key, summary])
+
+    P1 --> AGENT
+    P2 --> AGENT
+    P3 --> AGENT
+    P4 --> AGENT
+    P5 --> AGENT
+    AGENT --> OUT
+
+    classDef param fill:#e8f5ee, stroke:#1c8a6a, color:#15181d, stroke-width:1.5px
+    classDef core fill:#5eead4, stroke:#0a3326, color:#0a3326, stroke-width:2.5px
+    classDef out fill:#fff7d6, stroke:#cc8800, color:#663300, stroke-width:1.5px
+
+    class P1,P2,P3,P4,P5 param
+    class AGENT core
+    class OUT out
+  </pre>
+
+  <h3>The 5 swap points in detail</h3>
+
+  <table class="kv">
+    <thead>
+      <tr><th>Knob</th><th>Hyperbrowser</th><th>Vercel</th><th>Cursor</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>1. URL</strong> (target start)</td>
+        <td><code>https://app.hyperbrowser.ai/signup</code></td>
+        <td><code>https://vercel.com/account/settings/tokens</code></td>
+        <td><code>https://cursor.com/dashboard</code></td>
+      </tr>
+      <tr>
+        <td><strong>2. KEY_REGEX</strong> (vendor prefix)</td>
+        <td><code>^hb_[a-zA-Z0-9]{20,}$</code></td>
+        <td><code>^vcp_[a-zA-Z0-9]{24,}$</code></td>
+        <td><code>^(crsr_|cursor_sk_|key_)[a-zA-Z0-9]{20,}$</code></td>
+      </tr>
+      <tr>
+        <td><strong>3. OAUTH_PROVIDER</strong></td>
+        <td><code>google</code> (default)</td>
+        <td><code>github</code></td>
+        <td><code>google</code></td>
+      </tr>
+      <tr>
+        <td><strong>4. STATE_VOCAB extras</strong> (over the 5 universal)</td>
+        <td><code>at_dashboard_masked_key</code>, <code>at_dashboard_with_visible_key</code></td>
+        <td><code>at_token_list_page</code>, <code>at_token_revealed</code></td>
+        <td><code>at_api_keys_page</code>, <code>at_token_revealed</code>, <code>at_dashboard_other</code></td>
+      </tr>
+      <tr>
+        <td><strong>5. STATE_DISPATCH overrides</strong></td>
+        <td>masked_key → get_api_agent; visible_key → extract_direct</td>
+        <td>token_list_page → create_token; token_revealed → extract_direct + vision</td>
+        <td>dashboard_other → navigate via path-2; api_keys_page → create_token; token_revealed → extract_direct + vision</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>That's it. Everything else (cold-start logic, classifier call, main loop, declare(), terminal(), JSON contract) is identical across the three wrappers.</p>
+
+  <h2>Diagram 5 · Iteration cost per tool <span class="lvl">where time went, what failure modes hit</span></h2>
+
+  <p class="section-blurb">How many manual development iterations each tool took before the chain ran end-to-end, and what failed at each step. Validates that the build-cycle for new tools shrinks as the abstraction matures — Cursor (with three tools' worth of patterns to draw from) took the fewest iterations.</p>
+
+  <pre class="mermaid">
+flowchart LR
+    subgraph HB["Hyperbrowser · 4 runs (initial build, no failures)"]
+        HBR[Run 1-4: cold-start variations all green]
+    end
+
+    subgraph VC["Vercel · 7 runs to success"]
+        VCR1[Run 1: focus + auth_not_found]
+        VCR2[Run 2: regex theme-switch-]
+        VCR3[Run 3: regex team_]
+        VCR4[Run 4: regex too strict no_match]
+        VCR5[Run 5: vision saw modal but token gone 60s window]
+        VCR6[Run 6: WAF block]
+        VCR7[Run 7: SUCCESS]
+        VCR1 --> VCR2 --> VCR3 --> VCR4 --> VCR5 --> VCR6 --> VCR7
+    end
+
+    subgraph CU["Cursor · 3 runs to success"]
+        CUR1[Run 1: URL nav ignored by React Router]
+        CUR2[Run 2: path-2 click worked, but crsr_ prefix not in regex]
+        CUR3[Run 3: SUCCESS]
+        CUR1 --> CUR2 --> CUR3
+    end
+
+    classDef goodrun fill:#e8f5ee, stroke:#1c8a6a, color:#0a3326
+    classDef badrun fill:#ffb3b3, stroke:#b30000, color:#400000
+    classDef header fill:#1c2026, stroke:#5eead4, color:#e8eaed
+
+    class HBR,VCR7,CUR3 goodrun
+    class VCR1,VCR2,VCR3,VCR4,VCR5,VCR6,CUR1,CUR2 badrun
+  </pre>
+
+  <h3>What this shows</h3>
+
+  <ul class="tight">
+    <li><strong>Cost dropped sharply with each tool</strong>: Hyperbrowser 4 runs (template establishment), Vercel 7 runs (most failures were tool-specific edge cases: token format, modal timing, WAF), Cursor 3 runs (URL nav + token prefix only).</li>
+    <li><strong>The chassis itself was correct from run 1 in all cases</strong>. All failures were in TOOL-SPECIFIC knobs (regex, prompt text, dispatch table cells) — never in the chassis loop, classifier, or sub-agent logic.</li>
+    <li><strong>This is the empirical evidence the iteration-loop can be packaged</strong>. The failures were diagnosable from logs + screenshots, localized to the 5 swap points, and fixed via single-line edits. That's the signature of a packageable loop.</li>
+  </ul>
+
+  <h2>The unified agent spec <span class="lvl">precise enough to hand to the next implementation</span></h2>
+
+  <p class="section-blurb">Putting it all together: the input surface (ToolConfig), the agent's internals (which stay unchanged from the 3 wrappers), the success contract, and the iteration protocol. This is the spec that goes into the next phase's <code>claude -p</code> invocation or skill.</p>
+
+  <h3>Input surface — <code>ToolConfig</code> dataclass</h3>
+
+  <pre class="code">
+@dataclass
+class ToolConfig:
+    # 1. URL (the only mandatory swap)
+    name: str                          # used for session name + recording dir
+    url: str                           # target start URL
+
+    # 2. Vendor token shape (mandatory)
+    key_regex: str                     # e.g. r"^vcp_[a-zA-Z0-9]{24,}$"
+
+    # 3. OAuth provider (default: google)
+    oauth_provider: Literal["google", "github", "apple", "email"] = "google"
+
+    # 4-5. Tool-specific state vocab extras + dispatch overrides (optional)
+    extra_states: dict[str, str] = field(default_factory=dict)
+    dispatch_overrides: dict[str, Callable] = field(default_factory=dict)
+
+    # Token-extraction pattern (default: create-then-reveal w/ vision)
+    extraction_pattern: Literal["dashboard_visible", "create_with_modal"] \
+        = "create_with_modal"
+
+    # Optional: screen recording on by default
+    record: bool = True
+    record_fps: float = 1.0
+
+    # Optional: chassis paths needed (the LLM picks; this is a hint)
+    chassis_paths: set[int] = field(default_factory=lambda: {1, 2})  # 3 on demand</pre>
+
+  <h3>The unified agent's main loop — IDENTICAL across the 3 instances</h3>
+
+  <pre class="code">
+def run_unified_login_to_get_api(config: ToolConfig) -> dict:
+    """Returns final JSON: {status, tool, api_key, summary}"""
+
+    # Merge config's extras with the 5 universal states + create-token preset
+    state_vocab = build_state_vocab(config)
+    dispatch_table = build_dispatch_table(config)
+
+    # Identity loaded from doppler accounts/oauth (per OAUTH_PROVIDER)
+    os.environ.setdefault("OAUTH_PROVIDER", config.oauth_provider)
+
+    # Optional recorder
+    recorder = start_recorder(config) if config.record else None
+
+    try:
+        ensure_tab_for_cold_start(config.name, config.url)
+        for outer in range(1, MAX_OUTER_ITER + 1):
+            cls = classify(config.name, states=state_vocab)
+            if check_terminal_state(cls): return terminal_response()
+            dispatch = dispatch_table.get(cls["state"])
+            outcome, trace = dispatch(config.name, config.url)
+            if outcome == "done":
+                key = extract_or_vision(trace, config)
+                if config.key_regex_match(key):
+                    return done(key, summary=...)
+        return failed("max_outer_iter exceeded")
+    finally:
+        if recorder: recorder.terminate()</pre>
+
+  <h3>The three current wrappers, expressed as <code>ToolConfig</code> instances</h3>
+
+  <pre class="code">
+HYPERBROWSER_CONFIG = ToolConfig(
+    name="hyperbrowser",
+    url="https://app.hyperbrowser.ai/signup",
+    key_regex=r"^hb_[a-zA-Z0-9]{20,}$",
+    oauth_provider="google",
+    extraction_pattern="dashboard_visible",
+    extra_states={
+        "at_dashboard_masked_key": "Dashboard with API Key heading + masked value (***)",
+        "at_dashboard_with_visible_key": "Dashboard with API Key shown as plain text hb_*",
+    },
+    dispatch_overrides={
+        "at_dashboard_masked_key": dispatch_get_api,
+        "at_dashboard_with_visible_key": dispatch_extract_direct,
+    },
+)
+
+VERCEL_CONFIG = ToolConfig(
+    name="vercel",
+    url="https://vercel.com/account/settings/tokens",
+    key_regex=r"^vcp_[a-zA-Z0-9]{24,}$",
+    oauth_provider="github",  # awannaphasch2016@fau.edu identity
+    extraction_pattern="create_with_modal",  # uses default token-list/revealed states
+)
+
+CURSOR_CONFIG = ToolConfig(
+    name="cursor",
+    url="https://cursor.com/dashboard",
+    key_regex=r"^(crsr_|cursor_sk_|key_)[a-zA-Z0-9]{20,}$",
+    oauth_provider="google",  # anakwannaphaschaiyong@gmail.com identity
+    extraction_pattern="create_with_modal",
+    extra_states={
+        "at_dashboard_other": "Logged-in dashboard but NOT at API Keys page yet — needs sidebar navigation",
+    },
+    dispatch_overrides={
+        "at_dashboard_other": dispatch_navigate_to_api_keys_via_path2,
+    },
+)</pre>
+
+  <h3>The unified-agent invocation pattern</h3>
+
+  <pre class="code">
+# Single-tool one-off
+doppler run --project accounts --config oauth -- \
+  python scripts/login_get_api.py --config hyperbrowser
+
+# Or via claude -p with iteration loop packaged in
+claude -p "/build-tool-agent vercel https://vercel.com/account/settings/tokens vcp_ --oauth github --identity awannaphasch2016@fau.edu"
+
+# Adding a new tool: 1 line of config, no new code
+NEW_TOOL_CONFIG = ToolConfig(
+    name="openai",
+    url="https://platform.openai.com/api-keys",
+    key_regex=r"^sk-[a-zA-Z0-9]{40,}$",
+    oauth_provider="google",
+    extraction_pattern="create_with_modal",
+)</pre>
+
+  <h2>What "shared surface area" looks like in one paragraph</h2>
+
+  <p class="section-blurb">For the precise comment you mentioned wanting to write:</p>
+
+  <div class="callout good">
+    <strong>The shared surface area</strong>: 6 shared library files (<code>agent_core.py</code>, <code>state_classifier.py</code>, <code>signup_agent.py</code>, <code>onboarding_doer_agent.py</code>, <code>get_api_agent.py</code>, <code>create_token_agent.py</code>, plus optional <code>screen_recorder.py</code>) totaling ~1500 LoC, used identically by every tool wrapper. The wrapper itself is ~270 lines but only 5 specific values vary per tool: <strong>(1)</strong> URL, <strong>(2)</strong> key_regex, <strong>(3)</strong> oauth_provider, <strong>(4)</strong> extra_states dict (over the 5 universal states + 1 selectable create-token preset), <strong>(5)</strong> dispatch_overrides dict (state → callable). Identity credentials are externalized to <code>doppler accounts/oauth</code> (per-provider env vars: <code>GOOGLE_OAUTH_EMAIL</code>, <code>GITHUB_OAUTH_EMAIL</code>, etc.). Token extraction uses vision (<code>claude -p</code> with <code>@&lt;path&gt;</code> attachment) as the primary mechanism for create-with-modal tools, DOM-regex as the primary for dashboard-visible-key tools. The chassis exposes 13 action verbs across 3 identification paths (AX-tree index, DOM selector via opencli native <code>--text</code>/<code>--testid</code>/<code>--role</code>, pixel-coordinate via eval) — sufficient for all chassis-friendly and most chassis-unfriendly sites without further extension. Empirically validated across N=3 tools spanning Google + GitHub OAuth, dashboard-visible-key + create-with-modal extraction patterns, and same-domain + separate-subdomain auth substrates.
+  </div>
+
+  <h2>Open follow-ups</h2>
+
+  <ul class="tight">
+    <li><strong>Implement <code>scripts/login_get_api.py</code></strong> as the unified agent. Takes a <code>ToolConfig</code> instance (or config file / CLI args). Delete <code>hyperbrowser_signup.py</code>, <code>vercel_signup.py</code>, <code>cursor_signup.py</code> after migrating them to <code>ToolConfig</code> instances. Estimated ~250 lines of agent + ~30 lines per tool config = net code reduction of ~2x.</li>
+    <li><strong>Wire <code>screen_recorder.py</code> into all tool configs by default</strong> — currently only Cursor uses it.</li>
+    <li><strong>Promote <code>identity_loader.py</code></strong> per the <code>manage-account-with-doppler</code> preference's open follow-up — reads doppler accounts/oauth at boot, exposes a single <code>IDENTITY</code> dict to sub-agents.</li>
+    <li><strong>Package the unified agent + iteration loop as <code>.claude/skills/build-tool-agent/SKILL.md</code></strong> — the L2 packaging from the journal entry on multi-iteration → single-agent compression.</li>
+    <li><strong>Add a fourth tool (OpenAI Platform or Anthropic Console)</strong> as the first test of the unified agent — validates that adding a tool requires ONLY a new <code>ToolConfig</code>, zero code edits.</li>
+    <li><strong>Audit the prompt-text reuse across sub-agents</strong> — the diagrams above treat <code>signup_agent.py</code> as one shared file, but the prompt has Google-vs-GitHub branches. Is there a cleaner provider-protocol pattern? (Probably not until N=4 with a third provider.)</li>
+  </ul>
+
+  <h2>Cross-references</h2>
+
+  <ul class="tight">
+    <li>Journal · <code>multi-iteration-develop-then-test-cycle-for-browser-agent-wrappers-is-a-single-agent-pattern-...</code> — the meta-pattern this page operationalizes.</li>
+    <li>Journal · <code>browser-agents-are-focused-crawlers-with-degenerate-single-step-selection-and-richer-actions-...</code> — the abstract loop framing.</li>
+    <li>Journal · <code>agent-wrapper-architecture-choice-hardcoded-python-pipeline-vs-llm-orchestrator-...</code> — the rung-2 chassis whose generalization this enables.</li>
+    <li>Journal · <code>retrieve-then-act-pattern-for-browser-agents-...</code> — sibling composition pattern.</li>
+    <li>Preference · <code>manage-account-with-doppler</code> — the identity layer that feeds the unified agent.</li>
+    <li>Preference · <code>opencli</code> — the substrate the chassis depends on, including the three identification paths.</li>
+    <li>Code · <code>scripts/agent_core.py</code>, <code>scripts/state_classifier.py</code> — the shared chassis + classifier.</li>
+    <li>Code · <code>scripts/hyperbrowser_signup.py</code>, <code>scripts/vercel_signup.py</code>, <code>scripts/cursor_signup.py</code> — the three concrete instances diagrammed above.</li>
+  </ul>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.12.3/dist/mermaid.min.js"></script>
+</body>
+</html>

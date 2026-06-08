@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Paperclip process-adapter wrapper for the Hyperbrowser signup chain.
+"""Paperclip process-adapter wrapper for the Vercel signup → create-token chain.
 
-**Rung 2 — state-routed dispatcher** (per journal slug
-`agent-wrapper-architecture-choice-hardcoded-python-pipeline-vs-llm-orchestrator-with-sub-agents-as-skills-...`).
+State-routed dispatcher (rung 2). Same chassis as hyperbrowser_signup.py;
+swaps URL + persistence target + classifier vocabulary + dispatch table.
 
-Pipeline replaced with an outer loop:
-  observe state → classify (LLM + screenshot) → dispatch sub-agent → repeat
+Differences from Hyperbrowser:
+  - Vercel's API tokens require explicit creation (not dashboard-visible).
+  - signup_agent.py reused as-is because Vercel offers 'Continue with Google'.
+  - New sub-agent: create_token_agent.py (find Create button, fill name, submit,
+    extract revealed token).
+  - State vocab VERCEL_STATES adds at_token_list_page and at_token_revealed.
 
-Same 3 sub-agents (signup, onboarding-doer, get-api), unchanged.
-Only the wrapper changed.
+Tab navigation strategy:
+  Land directly at /account/settings/tokens. Vercel redirects to login with
+  next=%2Faccount%2Fsettings%2Ftokens, and after OAuth drops us back at the
+  tokens page — skipping the need for explicit /dashboard navigation.
 
-Defense-in-depth caps (per journal slug
-`defense-in-depth-nested-termination-bounds-...`):
-  - max_outer_iter = 10  (hard cap on dispatch iterations per run)
-  - state_loop_guard = 3 (abort if classifier returns same state 3x in a row)
-  - sub-agents have their own inner max_steps=15 from the chassis
-
-Contract Paperclip sees (unchanged from rung-1 version):
-  stdout final line: {"status": "done|blocked|failed", "tool": "hyperbrowser",
-                      "api_key": "<key>", "summary": "<one-line reason>"}
+Contract Paperclip sees:
+  stdout final line: {"status": "done|blocked|failed", "tool": "vercel",
+                      "api_key": "<token>", "summary": "<one-line reason>"}
   exit code:         0 for done/blocked, 1 for failed
   PATCH callback:    /api/issues/<assigned-issue-id> {status: ...}
 """
@@ -37,19 +37,30 @@ from pathlib import Path
 
 # Make state_classifier importable when this file runs from anywhere.
 sys.path.insert(0, str(Path(__file__).parent))
-from state_classifier import classify, HYPERBROWSER_STATES   # noqa: E402
+from state_classifier import classify, VERCEL_STATES   # noqa: E402
 
 
-URL = os.environ.get("HYPERBROWSER_URL", "https://app.hyperbrowser.ai/signup")
+URL = os.environ.get("VERCEL_URL", "https://vercel.com/account/settings/tokens")
 REPO = Path(__file__).parent.parent
-SESSION = os.environ.get("HYPERBROWSER_SESSION", "signup")
-KEY_REGEX = re.compile(r"^hb_[a-zA-Z0-9]{20,}$")
+SESSION = os.environ.get("VERCEL_SESSION", "vercel")
+# Vercel personal API tokens use the `vcp_` prefix followed by 24+ alphanumeric
+# chars. This is distinct from team IDs (`team_*`) and project IDs (`prj_*`)
+# which also appear in the post-create modal's DOM — narrow the regex to avoid
+# misidentifying them.
+VERCEL_TOKEN_PREFIX = "vcp_"
+KEY_REGEX = re.compile(rf"^{VERCEL_TOKEN_PREFIX}[a-zA-Z0-9]{{24,}}$")
+
+# Vercel auth: this user's identity uses GitHub OAuth (per
+# accounts/oauth doppler config — GITHUB_OAUTH_EMAIL).
+# Invoke as: `doppler run --project accounts --config oauth -- python
+# scripts/vercel_signup.py` so identity env vars are in the wrapper's
+# environment and inherit through to sub-agent subprocesses.
+os.environ.setdefault("OAUTH_PROVIDER", "github")
 
 MAX_OUTER_ITER = 10
-STATE_LOOP_GUARD = 3   # abort if same state classifier output N consecutive iterations
-INITIAL_SETTLE_S = 5   # let new tabs render before first classification
+STATE_LOOP_GUARD = 3
+INITIAL_SETTLE_S = 5
 
-# Substrings in an abort-reason that map to `blocked` rather than `failed`.
 BLOCKED_SIGNALS = ("required", "captcha", "payment", "kyc", "verification",
                    "gate", "limit", "locked")
 
@@ -81,9 +92,8 @@ def session_tab_url(session: str) -> str | None:
 
 
 def ensure_tab_for_cold_start(session: str, url: str) -> None:
-    """Navigate to `url` if the session owns no tab OR the current tab is at
-    a no-content URL (about:blank, chrome://newtab, etc.). Preserves existing
-    meaningful state so state-routed dispatch picks up wherever the world is.
+    """Navigate to `url` if session owns no tab OR the tab is at a no-content
+    URL. Preserves existing meaningful state for state-routed dispatch.
     """
     current = session_tab_url(session)
     is_blank = current is None or current.startswith(("about:", "chrome://newtab"))
@@ -93,7 +103,6 @@ def ensure_tab_for_cold_start(session: str, url: str) -> None:
     elif is_blank:
         action = ["opencli", "browser", session, "open", url]
     else:
-        # Real URL already loaded — preserve it for state-routed observation
         print(f"[wrapper] preserving existing tab at {current[:80]}", file=sys.stderr)
         return
 
@@ -104,25 +113,11 @@ def ensure_tab_for_cold_start(session: str, url: str) -> None:
     time.sleep(INITIAL_SETTLE_S)
 
 
-def extract_key_from_state(session: str) -> str:
-    """When state classifier reports `at_dashboard_with_visible_key`, the key
-    is in the DOM as plain text. Pull it with a single state read + regex.
-    """
-    r = _run(["opencli", "browser", session, "state"], timeout=30)
-    if r.returncode != 0:
-        return ""
-    m = re.search(r"\bhb_[a-zA-Z0-9]{20,}\b", r.stdout)
-    return m.group(0) if m else ""
-
-
 # ─── sub-agent dispatch ───────────────────────────────────────────────────────
 
 
 def run_sub(name: str, script: str, *args: str) -> tuple[str, dict | None]:
-    """Spawn a sub-agent script. Return (outcome_string, latest_trace_dict).
-    outcome_string is one of: 'done', 'abort: ...', 'max_steps_exceeded',
-    'crashed_exit_<n>', 'no_trace_written'.
-    """
+    """Spawn a sub-agent script. Return (outcome_string, latest_trace_dict)."""
     rc = subprocess.run(
         [sys.executable, script, *args], cwd=REPO,
     ).returncode
@@ -142,16 +137,12 @@ def run_sub(name: str, script: str, *args: str) -> tuple[str, dict | None]:
 # ─── state → action dispatch table ────────────────────────────────────────────
 
 
-# Each value is a callable: invoked with (session, url_for_cold_start) and
-# returns (sub_agent_outcome_str, trace_dict_or_None). For terminal states
-# (extract / abort), the callable handles them inline.
-
 def _dispatch_signup(session: str, url: str) -> tuple[str, dict | None]:
-    return run_sub("signup_agent", "scripts/signup_agent.py", url)
+    return run_sub("signup_agent", "scripts/signup_agent.py", url,
+                   "--session", session)
 
 
 def _dispatch_signup_resume(session: str, url: str) -> tuple[str, dict | None]:
-    # in_google_oauth — signup_agent is mid-flow; resume on the current tab
     return run_sub("signup_agent", "scripts/signup_agent.py",
                    "--no-nav", "--session", session)
 
@@ -161,29 +152,57 @@ def _dispatch_onboarding(session: str, url: str) -> tuple[str, dict | None]:
                    "--no-nav", "--session", session)
 
 
-def _dispatch_get_api(session: str, url: str) -> tuple[str, dict | None]:
-    return run_sub("get_api", "scripts/get_api_agent.py",
+def _dispatch_create_token(session: str, url: str) -> tuple[str, dict | None]:
+    return run_sub("create_token", "scripts/create_token_agent.py",
                    "--no-nav", "--session", session)
 
 
 def _dispatch_extract_direct(session: str, url: str) -> tuple[str, dict | None]:
-    key = extract_key_from_state(session)
-    # Return a synthetic "done" outcome with the key in a fake trace shape
-    # so the main loop's terminal handling can pick it up.
-    return "done", {"trace": [{"action": {"value": key}}]}
+    # at_token_revealed — token is visible on screen but Vercel renders it
+    # inside a <pre> element that opencli's tree-builder treats as opaque
+    # ('h:0%' marker), so DOM regex can't reach it. Use vision via
+    # `claude -p` with @<path> attachment to read the literal off the
+    # rendered screenshot. Pattern verified in journal slug
+    # `reading-files-with-file-path-attachment-syntax-in-claude-code-...`.
+    shot = Path(f"/tmp/vercel_extract_{int(time.time())}.png")
+    cap = _run(["opencli", "browser", session, "screenshot", str(shot)])
+    if cap.returncode != 0:
+        return "screenshot_failed", None
+
+    prompt = (
+        f"@{shot} Read the literal API token visible on this screen. The "
+        f"token starts with '{VERCEL_TOKEN_PREFIX}' followed by 30-60 "
+        f"alphanumeric characters. It will be displayed inside a 'Token "
+        f"Created' modal, typically in a code block with a copy button. "
+        f"Reply with ONLY the token literal — no surrounding quotes, no "
+        f"explanation, no labels. If you cannot see a token starting with "
+        f"'{VERCEL_TOKEN_PREFIX}', reply with exactly 'NO_TOKEN_VISIBLE'."
+    )
+    r = subprocess.run(
+        ["claude", "-p"], input=prompt,
+        capture_output=True, text=True, timeout=120,
+    )
+    if r.returncode != 0:
+        return f"claude_err_{r.returncode}", None
+
+    token = r.stdout.strip().strip("'\"`").strip()
+    if KEY_REGEX.match(token):
+        return "done", {"trace": [{"action": {"value": token}}]}
+
+    return "no_match", None
 
 
 STATE_DISPATCH = {
-    "at_signup_or_login":            _dispatch_signup,
-    "in_google_oauth":               _dispatch_signup_resume,
-    "in_onboarding":                 _dispatch_onboarding,
-    "at_dashboard_masked_key":       _dispatch_get_api,
-    "at_dashboard_with_visible_key": _dispatch_extract_direct,
-    # `blocked_external_gate` and `unknown` are terminal → handled inline in main()
+    "at_signup_or_login":  _dispatch_signup,
+    "in_google_oauth":     _dispatch_signup_resume,
+    "in_onboarding":       _dispatch_onboarding,
+    "at_token_list_page":  _dispatch_create_token,
+    "at_token_revealed":   _dispatch_extract_direct,
+    # `blocked_external_gate` and `unknown` are terminal → handled inline
 }
 
 
-# ─── disposition declare (PATCH issue status; unchanged from rung-1) ──────────
+# ─── disposition declare (PATCH issue status; unchanged from hyperbrowser) ───
 
 
 def declare(status: str) -> None:
@@ -238,11 +257,10 @@ def declare(status: str) -> None:
 
 
 def terminal(status: str, summary: str, key: str = "") -> None:
-    """Declare disposition + emit final-line JSON + exit."""
     declare(status)
     print(json.dumps({
         "status": status,
-        "tool": "hyperbrowser",
+        "tool": "vercel",
         "api_key": key,
         "summary": summary,
     }))
@@ -263,7 +281,7 @@ def main() -> None:
 
     for outer in range(1, MAX_OUTER_ITER + 1):
         try:
-            cls = classify(SESSION, states=HYPERBROWSER_STATES)
+            cls = classify(SESSION, states=VERCEL_STATES)
         except Exception as e:
             print(f"[wrapper] classifier error: {e}", file=sys.stderr)
             terminal("failed", f"classifier error at iter {outer}: {e}")
@@ -273,7 +291,6 @@ def main() -> None:
         print(f"[wrapper] iter {outer}/{MAX_OUTER_ITER}  state={state}  "
               f"evidence={cls['evidence'][:120]!r}", file=sys.stderr)
 
-        # State-loop guard — same state N consecutive iterations
         if state == last_state:
             consecutive_same_state += 1
         else:
@@ -294,14 +311,6 @@ def main() -> None:
             terminal("failed",
                      f"classifier returned unknown at iter {outer}: "
                      f"{cls['evidence']}")
-        if state == "at_dashboard_with_visible_key":
-            key = extract_key_from_state(SESSION)
-            if KEY_REGEX.match(key):
-                terminal("done", f"extracted directly from state at iter {outer}",
-                         key=key)
-            else:
-                terminal("failed",
-                         f"visible-key state but regex failed: got {key[:8]!r}")
 
         # Dispatch
         dispatch = STATE_DISPATCH.get(state)
@@ -312,13 +321,37 @@ def main() -> None:
         outcome, trace = dispatch(SESSION, URL)
         print(f"[wrapper]   sub-agent outcome: {outcome}", file=sys.stderr)
 
-        # If get_api just ran successfully, the key is in its trace's last action
-        if state == "at_dashboard_masked_key" and outcome == "done" and trace:
+        # Token extraction logic — handles two cases:
+        # (a) The dispatched sub-agent emitted a token literal directly
+        #     (extract_direct path; or create_token if it somehow read DOM).
+        # (b) The dispatched sub-agent submitted the create-form and emitted
+        #     a marker (TOKEN_CREATED). Run vision-based extract_direct
+        #     IMMEDIATELY before Vercel's modal transitions out of the
+        #     token-visible state (~60s window observed empirically).
+        if state in ("at_token_list_page", "at_token_revealed") and \
+                outcome == "done" and trace:
             last_action = (trace.get("trace") or [{}])[-1].get("action") or {}
-            key = (last_action.get("value") or "").strip()
-            if KEY_REGEX.match(key):
-                terminal("done", f"extracted via get_api at iter {outer}",
-                         key=key)
+            value = (last_action.get("value") or "").strip()
+
+            # Case (a) — direct token literal
+            if KEY_REGEX.match(value):
+                terminal("done",
+                         f"extracted via {state} dispatch at iter {outer}",
+                         key=value)
+
+            # Case (b) — create_token submitted, run vision extraction now
+            print(f"[wrapper]   running immediate vision extraction "
+                  f"(create_token marker={value!r})", file=sys.stderr)
+            vision_outcome, vision_trace = _dispatch_extract_direct(SESSION, URL)
+            print(f"[wrapper]   vision extraction outcome: {vision_outcome}",
+                  file=sys.stderr)
+            if vision_outcome == "done" and vision_trace:
+                vision_key = (vision_trace["trace"][-1]["action"]["value"] or "").strip()
+                if KEY_REGEX.match(vision_key):
+                    terminal("done",
+                             f"extracted via immediate vision after "
+                             f"{state} dispatch at iter {outer}",
+                             key=vision_key)
             # Otherwise fall through — re-classify on next iter
 
     # Outer max hit

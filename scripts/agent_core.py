@@ -36,35 +36,74 @@ recent actions. You pick ONE next action.
 Respond with ONLY a JSON object — no markdown fences, no prose outside JSON:
 
   {"thought": "<one short sentence>",
-   "action":  "click" | "fill" | "select" | "keys" | "wait_time" | "wait_selector" | "done" | "abort",
-   "target":  <int index from page state, or null>,
-   "value":   <string for fill text / option / key name / wait seconds / selector / abort reason, or null>}
+   "action":  one of the action verbs listed below,
+   "target":  <int index, int pixel-x, or string identifier — see per-action semantics>,
+   "value":   <string for fill text / selector / pixel-y / reason — see per-action semantics>}
 
 Action semantics:
-  click          target=<index>,  value=null
-  fill           target=<index>,  value="<text to type>"
-  select         target=<index>,  value="<option text or value to pick>"
-  keys           target=null,     value="<key name, e.g. Escape, Enter, Tab>"
-  wait_time      target=null,     value="<seconds, e.g. '3'>"
-  wait_selector  target=null,     value="<css selector to wait for>"
-  done           target=null,     value=null            (goal reached)
-  abort          target=null,     value="<reason>"
+
+  Index-based (path 1 — works when the element appears in 'interactive: N'
+  list with a [number] prefix):
+    click          target=<index>,  value=null
+    fill           target=<index>,  value="<text to type>"
+    select         target=<index>,  value="<option text or value to pick>"
+
+  DOM-based (path 2 — works when the element is visually present and you
+  can identify it by text content or test-id, even if it has NO [N] index
+  in the state list because it's a styled <div> without role/aria-label):
+    click_text     target=null,     value="<visible text on the element>"
+    click_testid   target=null,     value="<data-testid value>"
+    fill_text      target="<label or visible text near the input>",  value="<text to fill>"
+    fill_testid    target="<data-testid value>",                     value="<text to fill>"
+
+  Pixel-coordinate (path 3 — last resort; use only when paths 1 and 2 both
+  fail. Estimate coordinates from your visual judgment of the screenshot
+  the classifier captured. Use sparingly; brittle if page reflows):
+    click_xy       target=<integer x>,  value="<integer y>"
+
+  Keyboard / waiting / control:
+    keys           target=null,     value="<key name, e.g. Escape, Enter, Tab>"
+    wait_time      target=null,     value="<seconds, e.g. '3'>"
+    wait_selector  target=null,     value="<css selector to wait for>"
+    done           target=null,     value=null            (goal reached)
+    abort          target=null,     value="<reason>"
+
+Which path to pick:
+  - DEFAULT to `click` / `fill` / `select` (path 1) when the target has a
+    [N] index in the interactive list. Cheapest and most reliable.
+  - REACH for `click_text` / `click_testid` / `fill_text` / `fill_testid`
+    (path 2) when:
+      * 'interactive: 0' or very few indexed elements, but the page
+        VISUALLY renders content (style #3 — React with styled-div onClick
+        and no role= / aria-label =, common in some modern dashboards).
+      * The target you want has visible text or a data-testid but doesn't
+        appear in the [N] list.
+    `click_text` is the go-to. `click_testid` is more stable but requires
+    the page to use data-testid attributes.
+  - REACH for `click_xy` (path 3) only when paths 1 and 2 fail — e.g.,
+    canvas-rendered content (Figma, Sheets) where no DOM element exists
+    for the target. Pass integer pixel coordinates relative to the
+    rendered viewport.
 
 Note on dropdowns:
   - Native <select> tags: use `select` action.
-  - Custom div-styled dropdowns (most React/Tailwind UIs): use `click` to open,
-    then `click` the option index from the next state.
+  - Custom div-styled dropdowns (most React/Tailwind UIs): use `click` to
+    open the dropdown, then `click` (or `click_text`) the option from the
+    next state.
 
 Universal rules:
-  - NEVER emit an index higher than the count in the "interactive: N" footer.
-    If your target isn't visible, emit wait_time "3" — don't guess.
+  - NEVER emit an index higher than the count in the "interactive: N"
+    footer. If your target isn't visible AND you can't identify it by
+    text/testid, emit wait_time "3" — don't guess.
   - After a click that triggers navigation, the page often renders in two
     phases: skeleton DOM first, then real interactive elements. If the
-    "interactive:" count is small (< 10), the page is probably still booting.
-    Emit wait_time "3" before the next click.
+    "interactive:" count is small (< 10), the page is probably still
+    booting. Emit wait_time "3" before the next click.
   - Indices re-number every turn — only use indices from the LATEST state.
-  - If the same URL + interactive count repeats for 3 turns without progress,
-    abort with a reason.
+  - If the same URL + interactive count repeats for 3 turns without
+    progress, abort with a reason.
+  - When falling back from path 1 → path 2, mention what you tried in
+    `thought` so the trace records the escalation.
 """
 
 
@@ -91,6 +130,12 @@ class AgentConfig:
 
 
 def _run(cmd: list[str], *, timeout: int = 30) -> subprocess.CompletedProcess:
+    # `opencli browser` calls default to `--window foreground`, which fires
+    # Page.bringToFront on every interaction and steals OS-level focus from
+    # whatever the user is doing. Background mode keeps the tab driveable
+    # without yanking the Chrome window to the front.
+    if cmd[:2] == ["opencli", "browser"] and "--window" not in cmd:
+        cmd = cmd[:3] + ["--window", "background"] + cmd[3:]
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
@@ -145,8 +190,17 @@ def screenshot(session: str, path: Path) -> None:
 
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 _VALID_ACTIONS = {
-    "click", "fill", "select", "keys",
-    "wait_time", "wait_selector", "done", "abort",
+    # Path 1 — index-based (AX-tree-friendly sites, style #1/#2/#10)
+    "click", "fill", "select",
+    # Path 2 — DOM-based via opencli native flags (style #3 — bare-div React,
+    # opencli supports --text / --testid / --role natively on click and fill)
+    "click_text", "click_testid",
+    "fill_text", "fill_testid",
+    # Path 3 — pixel coordinates via eval (style #4/#5 — canvas, hung
+    # Suspense, or fully-opaque DOM)
+    "click_xy",
+    # Keyboard / waiting / control
+    "keys", "wait_time", "wait_selector", "done", "abort",
 }
 
 
@@ -182,23 +236,57 @@ def ask_llm(system_prompt: str, goal: str, state: str,
 
 def execute(session: str, act: dict) -> str:
     a = act["action"]
+    target = act.get("target")
+    value = act.get("value") or ""
+
+    # Path 1 — index-based
     if a == "click":
-        r = _run(["opencli", "browser", session, "click", str(act["target"])])
+        r = _run(["opencli", "browser", session, "click", str(target)])
     elif a == "fill":
         r = _run(["opencli", "browser", session, "fill",
-                  str(act["target"]), act["value"] or ""])
+                  str(target), value])
     elif a == "select":
         r = _run(["opencli", "browser", session, "select",
-                  str(act["target"]), act["value"] or ""])
+                  str(target), value])
+
+    # Path 2 — DOM-based via opencli native flags
+    elif a == "click_text":
+        r = _run(["opencli", "browser", session, "click",
+                  "--text", value])
+    elif a == "click_testid":
+        r = _run(["opencli", "browser", session, "click",
+                  "--testid", value])
+    elif a == "fill_text":
+        # `--text` flag picks the input by accessible-name/label text in
+        # `target`; the value to fill is in `value`.
+        r = _run(["opencli", "browser", session, "fill",
+                  "--text", str(target), value])
+    elif a == "fill_testid":
+        r = _run(["opencli", "browser", session, "fill",
+                  "--testid", str(target), value])
+
+    # Path 3 — pixel coordinates via eval
+    elif a == "click_xy":
+        try:
+            x = int(target)
+            y = int(value)
+        except (TypeError, ValueError):
+            return (f"ERROR click_xy needs integer coords: "
+                    f"target={target!r} value={value!r}")
+        js = f"document.elementFromPoint({x}, {y}).click()"
+        r = _run(["opencli", "browser", session, "eval", js])
+
+    # Keyboard / waiting
     elif a == "keys":
         r = _run(["opencli", "browser", session, "keys",
-                  act["value"] or "Escape"])
+                  value or "Escape"])
     elif a == "wait_time":
         r = _run(["opencli", "browser", session, "wait", "time",
-                  str(act["value"] or "2")])
+                  str(value or "2")])
     elif a == "wait_selector":
         r = _run(["opencli", "browser", session, "wait", "selector",
-                  act["value"] or "body"])
+                  value or "body"])
+
     else:
         return f"(noop for action={a})"
 
