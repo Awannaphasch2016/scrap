@@ -1,0 +1,39 @@
+@startuml C4_Component_RealestateRuntime
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Component.puml
+
+title C4 Level 3 — Components · inside realestate.run_daily\nFive modules + the orchestrator entry. diff.engine is load-bearing (fingerprint + field diff + withdrawal pass).
+
+AddElementTag("orch",     $bgColor="#1c8a6a", $borderColor="#0d5a45", $fontColor="#FFFFFF", $legendText="Orchestrator")
+AddElementTag("fetcher",  $bgColor="#E0F0FF", $borderColor="#3366AA", $fontColor="#003366", $legendText="Playwright module")
+AddElementTag("pure",     $bgColor="#FFF7D6", $borderColor="#CC8800", $fontColor="#663300", $legendText="Pure Python (no I/O)")
+AddElementTag("io",       $bgColor="#FFB3B3", $borderColor="#B30000", $fontColor="#660000", $legendText="I/O class (DB or HTTP)")
+AddElementTag("external", $bgColor="#F2F2F2", $borderColor="#666666", $fontColor="#333333", $legendText="External")
+
+Container_Boundary(rd, "realestate (Python package)") {
+    Component(orch, "run_daily.main()", "Orchestrator", "Sequences 4 stages · CLI flags --dry-sheets / --max-pages", $tags="orch")
+    Component(listings, "fetchers.listings", "Playwright module", "Paginates suburb search · emits CardSnapshot list", $tags="fetcher")
+    Component(probe, "fetchers.property_page", "Playwright module", "Probes /property/(addr)/ · discriminates SOLD vs WITHDRAWN", $tags="fetcher")
+    Component(diff, "diff.engine", "Pure Python", "compute_fingerprint · apply_snapshot · withdrawal_pass", $tags="pure")
+    Component(store, "storage.supabase.RealestateStore", "I/O class", "upsert_property · insert_event · select_active · mark_seen · mark_miss", $tags="io")
+    Component(sheets, "sheets.sync.SheetsSyncer", "I/O class", "Service-account auth · two-tab upsert/append", $tags="io")
+}
+
+Container_Ext(supadb, "Supabase Postgres", "", $tags="external")
+Container_Ext(reau, "realestate.com.au", "", $tags="external")
+Container_Ext(gsheets, "Google Sheets", "", $tags="external")
+
+Rel(orch, listings, "1. scrape_all_watches(store)")
+Rel(listings, reau, "GET /buy/in-(sub)+(st)/list-N", "HTTPS")
+Rel(orch, diff, "2. apply_snapshot(snaps, store)")
+Rel(diff, store, "upsert_property · insert_event(NEW/PRICE_CHANGED)")
+Rel(orch, diff, "3. withdrawal_pass(store, today)")
+Rel(diff, probe, "probe_canonical(url) when misses >= 2")
+Rel(probe, reau, "GET /property/(addr-slug)/", "HTTPS")
+Rel(orch, sheets, "4. sync(store)")
+Rel(sheets, store, "select_active + recent events")
+Rel(sheets, gsheets, "values.batchUpdate + values.append")
+Rel(store, supadb, "PostgREST POST/GET")
+
+SHOW_LEGEND()
+@enduml

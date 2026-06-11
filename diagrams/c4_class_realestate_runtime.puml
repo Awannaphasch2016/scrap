@@ -1,0 +1,119 @@
+@startuml C4_Class_RealestateRuntime
+title UML L4 — Class diagram · realestate runtime\nDataclasses (immutable per-run values) + two service classes (I/O).
+
+skinparam backgroundColor #14171c
+skinparam shadowing false
+skinparam defaultFontColor #e8eaed
+skinparam ArrowColor #888888
+skinparam ArrowFontColor #9aa3ad
+skinparam noteBackgroundColor #1c2026
+skinparam noteBorderColor #5eead4
+skinparam noteFontColor #e8eaed
+
+skinparam class {
+    BackgroundColor #1c2026
+    BorderColor #5eead4
+    FontColor #e8eaed
+    AttributeFontColor #e8eaed
+    HeaderBackgroundColor #1c2026
+    StereotypeFontColor #9aa3ad
+}
+
+skinparam class<<value>> {
+    BackgroundColor #14171c
+    BorderColor #fbbf24
+    FontColor #e8eaed
+    HeaderBackgroundColor #14171c
+    AttributeFontColor #e8eaed
+    StereotypeFontColor #fbbf24
+}
+
+skinparam class<<service>> {
+    BackgroundColor #1c2026
+    BorderColor #5eead4
+    FontColor #e8eaed
+    HeaderBackgroundColor #1c2026
+    AttributeFontColor #e8eaed
+    StereotypeFontColor #5eead4
+}
+
+class CardSnapshot <<value>> {
+    + canonical_url: str
+    + listing_url: str
+    + address: str
+    + suburb_slug: str
+    + state_slug: str
+    + price_text: str
+    + agent_name: str
+    + agency_name: str
+    + bed: int
+    + bath: int
+    + car: int
+    + property_type: str
+    + status_badge: str
+    + fingerprint: str
+    + raw_card: dict
+    --
+    + compute_fingerprint() : str
+}
+
+class ProbeResult <<value>> {
+    + outcome: str
+    + sold_price: str
+    + sold_date: date
+    --
+    note: outcome in {SOLD, STILL_LISTED, NOT_FOUND}
+}
+
+class Event <<value>> {
+    + property_id: UUID
+    + event_type: str
+    + payload: dict
+    + occurred_at: datetime
+    --
+    note: event_type in {NEW, PRICE_CHANGED, SOLD, WITHDRAWN, RELISTED}
+}
+
+class PropertyRow <<value>> {
+    + id: UUID
+    + canonical_url: str
+    + current_price: str
+    + current_status: str
+    + consecutive_misses: int
+    + last_seen_at: datetime
+    + fingerprint: str
+}
+
+class SyncReport <<value>> {
+    + properties_upserted: int
+    + events_appended: int
+    + duration_ms: int
+}
+
+class RealestateStore <<service>> {
+    - writer: RestWriter
+    --
+    + upsert_property(snap: CardSnapshot) : UUID
+    + insert_event(ev: Event) : None
+    + select_active() : list[PropertyRow]
+    + select_missing_since(d: date) : list[PropertyRow]
+    + mark_seen(id: UUID) : None
+    + mark_miss(id: UUID) : int
+}
+
+class SheetsSyncer <<service>> {
+    - creds: Credentials
+    - sheet_id: str
+    --
+    + sync(store: RealestateStore) : SyncReport
+    - _upsert_properties_tab(rows) : int
+    - _append_events_tab(events) : int
+}
+
+RealestateStore ..> CardSnapshot : upserts
+RealestateStore ..> Event : inserts
+RealestateStore ..> PropertyRow : reads
+SheetsSyncer --> RealestateStore : reads
+SheetsSyncer ..> SyncReport : returns
+
+@enduml

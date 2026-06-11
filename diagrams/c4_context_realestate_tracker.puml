@@ -1,0 +1,29 @@
+@startuml C4_Context_RealestateTracker
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Context.puml
+
+title C4 Level 1 — Context · realestate.com.au daily tracker (v1)\nWho touches the system. Operator-triggered for v1; Lambda + EventBridge deferred to v1.5.
+
+AddElementTag("system",   $bgColor="#E0F0FF", $borderColor="#3366AA", $fontColor="#003366", $legendText="System under design")
+AddElementTag("external", $bgColor="#F2F2F2", $borderColor="#666666", $fontColor="#333333", $legendText="External system")
+AddElementTag("actor",    $bgColor="#FFF8E1", $borderColor="#CC8800", $fontColor="#663300", $legendText="Person")
+
+Person(operator, "Operator (anak)", "Triggers daily scrape · curates watched suburb list", $tags="actor")
+Person(prospect, "AU Property Prospect", "Reads the Google Sheet · sees new listings, price changes, sales", $tags="actor")
+
+System(tracker, "realestate-tracker", "Local Python pipeline · scrape · diff · sync", $tags="system")
+
+System_Ext(reau, "realestate.com.au", "Public AU property listings · suburb search + canonical address pages", $tags="external")
+System_Ext(supabase, "Supabase", "Postgres backend · schema 'realestate' · 3 tables", $tags="external")
+System_Ext(gsheets, "Google Sheets", "Client-facing dashboard · Properties + Events tabs", $tags="external")
+System_Ext(doppler, "Doppler", "Secrets · REALESTATE_SUPABASE_DSN, REALESTATE_SHEETS_SA_JSON, REALESTATE_SHEET_ID", $tags="external")
+
+Rel(operator, tracker, "Runs", "doppler run -- python -m realestate.run_daily")
+Rel(tracker, doppler, "Loads REALESTATE_* secrets at startup", "doppler CLI")
+Rel(tracker, reau, "Scrapes search + canonical pages", "HTTPS · Playwright")
+Rel(tracker, supabase, "Upsert state · append events", "PostgREST")
+Rel(tracker, gsheets, "Upsert Properties tab · append Events tab", "Sheets API v4")
+Rel(prospect, gsheets, "Reads", "Browser")
+
+SHOW_LEGEND()
+@enduml

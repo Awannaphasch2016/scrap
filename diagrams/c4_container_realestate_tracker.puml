@@ -1,0 +1,32 @@
+@startuml C4_Container_RealestateTracker
+!define RELATIVE_INCLUDE "./lib"
+!include ./lib/C4_Container.puml
+
+title C4 Level 2 — Containers · realestate-tracker (v1, local)\nOne Python orchestrator drives one headless Playwright browser. No queue, no SFN — single process.
+
+AddElementTag("internal", $bgColor="#E0F0FF", $borderColor="#3366AA", $fontColor="#003366", $legendText="Inside the tracker boundary")
+AddElementTag("db",       $bgColor="#FFF8E1", $borderColor="#CC8800", $fontColor="#663300", $legendText="Database")
+AddElementTag("external", $bgColor="#F2F2F2", $borderColor="#666666", $fontColor="#333333", $legendText="External system")
+AddElementTag("actor",    $bgColor="#FFFFFF", $borderColor="#3366AA", $fontColor="#003366", $legendText="Person")
+
+Person(operator, "Operator", "", $tags="actor")
+
+System_Boundary(t, "realestate-tracker") {
+    Container(run_daily, "run_daily.py", "Python 3.12 orchestrator", "Sequences scrape · diff · withdrawal pass · sheets sync", $tags="internal")
+    Container(pw, "Playwright chromium", "Headless browser", "Loads suburb /buy/ pages + canonical /property/ pages", $tags="internal")
+}
+
+System_Ext(reau, "realestate.com.au", "Public listings (Argonaut framework)", $tags="external")
+ContainerDb(supadb, "Supabase Postgres", "Postgres 15", "schema 'realestate' · re_watch, re_property, re_event", $tags="db")
+System_Ext(gsheets, "Google Sheets", "Properties tab (upsert) · Events tab (append)", $tags="external")
+System_Ext(doppler, "Doppler", "scrape/dev config · REALESTATE_* keys", $tags="external")
+
+Rel(operator, run_daily, "Invokes from CLI")
+Rel(run_daily, doppler, "Pulls REALESTATE_* secrets at startup", "subprocess")
+Rel(run_daily, pw, "Drives", "sync_playwright()")
+Rel(pw, reau, "page.goto + page.evaluate", "HTTPS")
+Rel(run_daily, supadb, "Upsert · select", "PostgREST HTTP")
+Rel(run_daily, gsheets, "values.batchUpdate · values.append", "Sheets API v4")
+
+SHOW_LEGEND()
+@enduml
